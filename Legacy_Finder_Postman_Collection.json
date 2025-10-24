@@ -1,0 +1,129 @@
+{
+  "info": {
+    "name": "Legacy Website Finder API",
+    "description": "API collection for testing Legacy Website Finder endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:5000/api/health",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["api", "health"]
+        }
+      }
+    },
+    {
+      "name": "Scan Legacy Websites - Restaurants",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"city\": \"Kolkata\",\n  \"state\": \"West Bengal\",\n  \"country\": \"India\",\n  \"radius\": 5000,\n  \"businessCategory\": \"restaurants\",\n  \"leadCap\": 20\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5000/api/scan",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["api", "scan"]
+        }
+      }
+    },
+    {
+      "name": "Scan Legacy Websites - Hotels",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"city\": \"Mumbai\",\n  \"state\": \"Maharashtra\",\n  \"country\": \"India\",\n  \"radius\": 10000,\n  \"businessCategory\": \"hotels\",\n  \"leadCap\": 30\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5000/api/scan",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["api", "scan"]
+        }
+      }
+    },
+    {
+      "name": "Scan Legacy Websites - Lawyers",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"city\": \"Delhi\",\n  \"country\": \"India\",\n  \"radius\": 8000,\n  \"businessCategory\": \"lawyers\",\n  \"leadCap\": 15\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5000/api/scan",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["api", "scan"]
+        }
+      }
+    },
+    {
+      "name": "Scan Legacy Websites - No Category",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"city\": \"Bangalore\",\n  \"state\": \"Karnataka\",\n  \"country\": \"India\",\n  \"radius\": 15000,\n  \"leadCap\": 50\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5000/api/scan",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["api", "scan"]
+        }
+      }
+    },
+    {
+      "name": "Download Excel Report",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:5000/api/download",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["api", "download"]
+        }
+      }
+    }
+  ]
+}

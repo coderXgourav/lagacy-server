@@ -17,6 +17,9 @@ const settingsRoutes = require('./routes/settings');
 const searchesRoutes = require('./routes/searches');
 const leadsRoutes = require('./routes/leads');
 const searchExecutionRoutes = require('./routes/searchExecution');
+const scanRoute = require('./src/routes/scanRoute');
+const downloadRoute = require('./src/routes/downloadRoute');
+const historyRoute = require('./src/routes/historyRoute');
 
 // Routes
 app.get('/', (req, res) => {
@@ -33,5 +36,8 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/searches', searchesRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/search', searchExecutionRoutes);
+app.use('/api/scan', scanRoute);
+app.use('/api/download', downloadRoute);
+app.use('/api/history', historyRoute);
 
 module.exports = app;
