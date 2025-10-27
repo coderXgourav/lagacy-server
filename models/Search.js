@@ -41,9 +41,19 @@ const searchSchema = new mongoose.Schema({
   errorMessage: {
     type: String,
     default: ''
+  },
+  downloadInfo: {
+    isDownloadable: { type: Boolean, default: true },
+    downloadCount: { type: Number, default: 0 },
+    lastDownloadedAt: Date,
+    expiresAt: Date
   }
 }, {
   timestamps: true
 });
+
+// Index for efficient querying
+searchSchema.index({ status: 1, executedAt: -1 });
+searchSchema.index({ 'downloadInfo.isDownloadable': 1 });
 
 module.exports = mongoose.model('Search', searchSchema);

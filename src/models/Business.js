@@ -7,6 +7,7 @@ const businessSchema = new mongoose.Schema({
   address: String,
   website: { type: String, required: true },
   domainCreationDate: String,
+  ownerName: String,
   isLegacy: { type: Boolean, default: false },
   emails: [String],
   location: {

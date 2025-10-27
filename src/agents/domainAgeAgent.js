@@ -23,7 +23,7 @@ async function checkDomainAge(domain, retries = 2) {
     
     if (!apiKey) {
       console.log(`⚠ No WhoisXML API key for ${domain}`);
-      return '2015-01-01T00:00:00.000Z';
+      return null;
     }
     
     //console.log(`Checking ${domain} with key: ${apiKey.substring(0, 10)}...`);
@@ -35,20 +35,26 @@ async function checkDomainAge(domain, retries = 2) {
       }
     });
 
-    const creationDate = response.data?.WhoisRecord?.createdDate;
+    const whoisRecord = response.data?.WhoisRecord;
+    const creationDate = whoisRecord?.createdDate;
+    const ownerName = whoisRecord?.registrant?.name || 
+                      whoisRecord?.registrant?.organization || 
+                      whoisRecord?.administrativeContact?.name ||
+                      null;
+    
     if (creationDate) {
-      console.log(`✓ ${domain} created: ${creationDate}`);
+      console.log(`✓ ${domain} created: ${creationDate}, owner: ${ownerName || 'N/A'}`);
     }
-    return creationDate || null;
+    return { creationDate: creationDate || null, ownerName };
   } catch (error) {
     const status = error.response?.status;
     if (status === 401) {
       console.log(`✗ WhoisXML 401 for ${domain} - Invalid API key`);
-      return '2015-01-01T00:00:00.000Z';
+      return null;
     }
     if (status === 402) {
       console.log(`✗ WhoisXML 402 for ${domain} - No credits`);
-      return '2015-01-01T00:00:00.000Z';
+      return null;
     }
     if (retries > 0) {
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -66,17 +72,24 @@ async function enrichWithDomainAge(businesses) {
   
   for (const business of businesses) {
     const domain = extractDomain(business.website);
-    if (!domain) continue;
-
-    const creationDate = await checkDomainAge(domain);
-    
-    if (creationDate) {
-      enriched.push({
-        ...business,
-        domain,
-        creationDate
-      });
+    if (!domain) {
+      console.log(`⚠ Skipped ${business.website} - Invalid domain`);
+      continue;
     }
+
+    const domainInfo = await checkDomainAge(domain);
+    
+    if (!domainInfo?.creationDate) {
+      console.log(`✗ ${domain} - No creation date, skipping`);
+      continue;
+    }
+    
+    enriched.push({
+      ...business,
+      domain,
+      creationDate: domainInfo.creationDate,
+      ownerName: domainInfo.ownerName
+    });
     
     // Rate limiting
     await new Promise(resolve => setTimeout(resolve, 500));
