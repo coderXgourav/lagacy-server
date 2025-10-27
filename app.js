@@ -8,8 +8,26 @@ const app = express();
 connectDB();
 
 // Middleware
+// app.use(cors({
+//   origin: ["https://lagacy-server.onrender.com", "http://localhost:5153"],
+//   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+//   credentials: true,
+// }));
+
+
+const allowedOrigins = [
+  "https://lagacy-server.onrender.com",
+  "http://localhost:5153"
+];
+
 app.use(cors({
-  origin: "https://lagacy-server.onrender.com",
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   credentials: true,
 }));
