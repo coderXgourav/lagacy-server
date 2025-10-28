@@ -28,6 +28,7 @@ const searchExecutionRoutes = require('./routes/searchExecution');
 const scanRoute = require('./src/routes/scanRoute');
 const downloadRoute = require('./src/routes/downloadRoute');
 const historyRoute = require('./src/routes/historyRoute');
+// const outreachRoutes = require('./routes/outreach');
 
 // Routes
 app.get('/', (req, res) => {
@@ -48,5 +49,6 @@ app.use('/api/search', searchExecutionRoutes);
 app.use('/api/scan', scanRoute);
 app.use('/api/download', downloadRoute);
 app.use('/api/history', historyRoute);
+// app.use('/api/outreach', outreachRoutes);
 
 module.exports = app;
