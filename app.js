@@ -9,7 +9,7 @@ connectDB();
 
 // Middleware
 app.use(cors({
-  origin: ["https://lagacy-server.onrender.com", "http://localhost:5153", "www.lagacy-server.onrender.com", "http://www.lagacy-server.onrender.com"],
+  origin: ["https://lagacy-client.vercel.app", "http://localhost:8080", "http://localhost:5173"],
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   credentials: true,
 }));
@@ -20,6 +20,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Import routes
+const authRoutes = require('./routes/auth');
 const settingsRoutes = require('./routes/settings');
 const searchesRoutes = require('./routes/searches');
 const leadsRoutes = require('./routes/leads');
@@ -39,6 +40,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // Mount API routes
+app.use('/api/auth', authRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/searches', searchesRoutes);
 app.use('/api/leads', leadsRoutes);

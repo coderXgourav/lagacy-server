@@ -5,7 +5,8 @@ const SearchResult = require('../models/SearchResult');
 // Get all searches
 exports.getAllSearches = async (req, res) => {
   try {
-    const searches = await Search.find().sort({ executedAt: -1 }).limit(50);
+    const userId = req.user._id;
+    const searches = await Search.find({ userId }).sort({ executedAt: -1 }).limit(50);
     res.json({ success: true, data: searches });
   } catch (error) {
     console.error('Error fetching searches:', error);
@@ -16,8 +17,9 @@ exports.getAllSearches = async (req, res) => {
 // Get recent searches (last 10)
 exports.getRecentSearches = async (req, res) => {
   try {
+    const userId = req.user._id;
     const limit = parseInt(req.query.limit) || 10;
-    const searches = await Search.find().sort({ executedAt: -1 }).limit(limit);
+    const searches = await Search.find({ userId }).sort({ executedAt: -1 }).limit(limit);
     res.json({ success: true, data: searches });
   } catch (error) {
     console.error('Error fetching recent searches:', error);
@@ -28,7 +30,8 @@ exports.getRecentSearches = async (req, res) => {
 // Get search by ID
 exports.getSearchById = async (req, res) => {
   try {
-    const search = await Search.findById(req.params.id);
+    const userId = req.user._id;
+    const search = await Search.findOne({ _id: req.params.id, userId });
     
     if (!search) {
       return res.status(404).json({ success: false, message: 'Search not found' });
@@ -44,9 +47,11 @@ exports.getSearchById = async (req, res) => {
 // Create new search
 exports.createSearch = async (req, res) => {
   try {
+    const userId = req.user._id;
     const { query, searchType, filters, apiUsed } = req.body;
     
     const search = await Search.create({
+      userId,
       query,
       searchType,
       filters,
@@ -65,6 +70,7 @@ exports.createSearch = async (req, res) => {
 // Update search status
 exports.updateSearchStatus = async (req, res) => {
   try {
+    const userId = req.user._id;
     const { status, resultsCount } = req.body;
     
     const updateData = { status, resultsCount };
@@ -75,7 +81,7 @@ exports.updateSearchStatus = async (req, res) => {
       updateData['downloadInfo.expiresAt'] = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     }
     
-    const search = await Search.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    const search = await Search.findOneAndUpdate({ _id: req.params.id, userId }, updateData, { new: true });
     
     if (!search) {
       return res.status(404).json({ success: false, message: 'Search not found' });
@@ -91,6 +97,7 @@ exports.updateSearchStatus = async (req, res) => {
 // Store search results
 exports.storeSearchResults = async (req, res) => {
   try {
+    const userId = req.user._id;
     const { searchId, results } = req.body;
     
     if (!results || !Array.isArray(results)) {
@@ -99,6 +106,7 @@ exports.storeSearchResults = async (req, res) => {
     
     const searchResults = results.map(result => ({
       searchId,
+      userId,
       businessData: {
         name: result.name || result.businessName || result.company || 'Unknown Business',
         website: result.website || '',
@@ -142,10 +150,11 @@ exports.storeSearchResults = async (req, res) => {
 // Get search results for download
 exports.getSearchResults = async (req, res) => {
   try {
+    const userId = req.user._id;
     const { searchId } = req.params;
     const { format = 'json' } = req.query;
     
-    const search = await Search.findById(searchId);
+    const search = await Search.findOne({ _id: searchId, userId });
     if (!search) {
       return res.status(404).json({ success: false, message: 'Search not found' });
     }
@@ -155,9 +164,10 @@ exports.getSearchResults = async (req, res) => {
     }
     
     const results = await SearchResult.find({ 
-      searchId, 
+      searchId,
+      userId,
       'downloadStatus.isIncludedInDownload': true 
-    }).select('-_id -searchId -downloadStatus -createdAt -updatedAt');
+    }).select('-_id -searchId -userId -downloadStatus -createdAt -updatedAt');
     
     // Update download tracking
     await Search.findByIdAndUpdate(searchId, {
@@ -191,7 +201,8 @@ exports.getSearchResults = async (req, res) => {
 // Delete search
 exports.deleteSearch = async (req, res) => {
   try {
-    const search = await Search.findByIdAndDelete(req.params.id);
+    const userId = req.user._id;
+    const search = await Search.findOneAndDelete({ _id: req.params.id, userId });
     
     if (!search) {
       return res.status(404).json({ success: false, message: 'Search not found' });
@@ -200,7 +211,7 @@ exports.deleteSearch = async (req, res) => {
     // Delete associated data
     await Promise.all([
       Lead.deleteMany({ searchId: req.params.id }),
-      SearchResult.deleteMany({ searchId: req.params.id })
+      SearchResult.deleteMany({ searchId: req.params.id, userId })
     ]);
     
     res.json({ success: true, message: 'Search deleted successfully' });

@@ -11,7 +11,9 @@ exports.getSettings = async (req, res) => {
         apiKeys: {
           whoisxml: '',
           hunter: '',
-          googlePlaces: ''
+          googlePlaces: '',
+          whoisfreaks: '',
+          foursquare: ''
         },
         notifications: {
           email: false,
@@ -67,7 +69,7 @@ exports.updateSettings = async (req, res) => {
 // Update API keys specifically
 exports.updateApiKeys = async (req, res) => {
   try {
-    const { whoisxml, hunter, googlePlaces } = req.body;
+    const { whoisxml, hunter, googlePlaces, whoisfreaks, foursquare } = req.body;
     
     let settings = await Settings.findOne();
     
@@ -78,6 +80,8 @@ exports.updateApiKeys = async (req, res) => {
     if (whoisxml !== undefined) settings.apiKeys.whoisxml = whoisxml;
     if (hunter !== undefined) settings.apiKeys.hunter = hunter;
     if (googlePlaces !== undefined) settings.apiKeys.googlePlaces = googlePlaces;
+    if (whoisfreaks !== undefined) settings.apiKeys.whoisfreaks = whoisfreaks;
+    if (foursquare !== undefined) settings.apiKeys.foursquare = foursquare;
     
     settings.updatedAt = Date.now();
     await settings.save();

@@ -1,6 +1,12 @@
 const mongoose = require('mongoose');
 
 const searchSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true
+  },
   query: {
     type: String,
     required: true
@@ -53,6 +59,7 @@ const searchSchema = new mongoose.Schema({
 });
 
 // Index for efficient querying
+searchSchema.index({ userId: 1, executedAt: -1 });
 searchSchema.index({ status: 1, executedAt: -1 });
 searchSchema.index({ 'downloadInfo.isDownloadable': 1 });
 

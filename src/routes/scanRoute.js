@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const authMiddleware = require('../../middleware/auth');
 const { findBusinesses } = require('../agents/discoveryAgent');
 const { enrichWithDomainAge } = require('../agents/domainAgeAgent');
 const { filterLegacyWebsites } = require('../agents/filterAgent');
@@ -10,8 +11,9 @@ const Search = require('../../models/Search');
 const SearchResult = require('../../models/SearchResult');
 const logger = require('../utils/logger');
 
-router.post('/', async (req, res) => {
+router.post('/', authMiddleware, async (req, res) => {
   try {
+    const userId = req.user._id;
     const { city, state, country, radius = 5000, businessCategory, leadCap = 50, domainYear, filterMode = 'before' } = req.body;
 
     if (!city || !country) {
@@ -29,56 +31,9 @@ router.post('/', async (req, res) => {
 
     // Step 1: Discover businesses
     const category = businessCategory === 'all' ? '' : businessCategory;
-    let businesses = await findBusinesses(location, category, radius);
+    const businesses = await findBusinesses(location, category, radius);
     
-    // Filter out government, big tech, and major MNCs
-    const excludeTypes = [
-      'government', 'local_government_office', 'city_hall', 'embassy', 'courthouse', 'police', 'fire_station',
-      'lawyer', 'law_firm', 'accounting', 'insurance_agency', 'real_estate_agency', 'finance'
-    ];
-    const excludeDomains = [
-      'google.com', 'facebook.com', 'microsoft.com', 'amazon.com', 'apple.com', 'twitter.com', 'linkedin.com', 'instagram.com', 'youtube.com',
-      'mcdonalds.com', 'starbucks.com', 'subway.com', 'kfc.com', 'pizzahut.com', 'dominos.com', 'burgerking.com', 'wendys.com',
-      'walmart.com', 'target.com', 'costco.com', 'ikea.com', 'homedepot.com', 'lowes.com',
-      'marriott.com', 'hilton.com', 'hyatt.com', 'ihg.com', 'accor.com',
-      'nike.com', 'adidas.com', 'gap.com', 'hm.com', 'zara.com', 'uniqlo.com',
-      'shell.com', 'bp.com', 'exxon.com', 'chevron.com',
-      'coca-cola.com', 'pepsi.com', 'nestle.com', 'unilever.com', 'pg.com',
-      'jpmorgan.com', 'bankofamerica.com', 'wellsfargo.com', 'citigroup.com', 'hsbc.com',
-      'tata.com', 'relianceindustries.com', 'adityabirla.com', 'mahindra.com', 'infosys.com', 'tcs.com', 'wipro.com', 'hcl.com',
-      'bharti.com', 'airtel.in', 'jio.com', 'vodafone.in',
-      'sbi.co.in', 'hdfcbank.com', 'icicibank.com', 'axisbank.com', 'pnb.co.in',
-      'bigbazaar.com', 'dmart.in', 'reliance.com', 'spencers.in', 'more.in',
-      'haldirams.com', 'bikanervala.com', 'nirulas.com', 'saravanaabhavan.com',
-      'gov', '.gov.', 'edu', '.edu.', 'nic.in', '.ac.in'
-    ];
-    const excludeNames = [
-      'mcdonalds', 'starbucks', 'subway', 'kfc', 'pizza hut', 'dominos', 'burger king', 'walmart', 'target', 'costco', 'ikea',
-      'tata', 'reliance', 'aditya birla', 'mahindra', 'infosys', 'tcs', 'wipro', 'hcl',
-      'airtel', 'jio', 'vodafone', 'idea',
-      'state bank', 'hdfc', 'icici', 'axis bank', 'punjab national',
-      'big bazaar', 'dmart', 'spencers', 'more supermarket',
-      'haldiram', 'bikanervala', 'nirula', 'saravana bhavan', 'udupi',
-      'cafe coffee day', 'barista', 'costa coffee',
-      'pvr', 'inox', 'cinepolis',
-      'apollo', 'fortis', 'max healthcare', 'manipal',
-      'law firm', 'attorney', 'advocate', 'legal', 'chartered accountant', 'ca firm', 'insurance', 'real estate'
-    ];
-    
-    businesses = businesses.filter(b => {
-      const lowerName = b.name.toLowerCase();
-      const hasExcludedType = b.category && excludeTypes.some(type => b.category.includes(type));
-      const hasExcludedDomain = excludeDomains.some(domain => b.website.includes(domain));
-      const hasExcludedName = excludeNames.some(name => lowerName.includes(name));
-      
-      // Additional check for professional services keywords
-      const professionalKeywords = ['law', 'legal', 'attorney', 'advocate', 'chartered', 'insurance', 'realty'];
-      const isProfessionalService = professionalKeywords.some(keyword => lowerName.includes(keyword));
-      
-      return !hasExcludedType && !hasExcludedDomain && !hasExcludedName && !isProfessionalService;
-    });
-    
-    logger.info(`Filtered to ${businesses.length} businesses after excluding government/big tech`);
+    logger.info(`Found ${businesses.length} businesses`);
     
     if (businesses.length === 0) {
       return res.json({ message: 'No businesses found', count: 0, data: [] });
@@ -148,6 +103,7 @@ router.post('/', async (req, res) => {
 
     // Save to new Search model
     const search = await Search.create({
+      userId,
       query: location,
       searchType: 'location',
       filters: { city, state, country, radius, category: businessCategory, domainYear, filterMode },
@@ -163,6 +119,7 @@ router.post('/', async (req, res) => {
     // Store results
     const searchResults = savedBusinesses.map(b => ({
       searchId: search._id,
+      userId,
       businessData: {
         name: b.businessName,
         website: b.website,

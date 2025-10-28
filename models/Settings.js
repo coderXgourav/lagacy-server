@@ -13,6 +13,14 @@ const settingsSchema = new mongoose.Schema({
     googlePlaces: {
       type: String,
       default: ''
+    },
+    foursquare: {
+      type: String,
+      default: ''
+    },
+    whoisfreaks: {
+      type: String,
+      default: ''
     }
   },
   notifications: {

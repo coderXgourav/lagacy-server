@@ -4,6 +4,17 @@ const Settings = require('../../models/Settings');
 
 async function findEmails(domain, retries = 2) {
   try {
+    // Skip social media and aggregator domains
+    const skipDomains = [
+      'facebook.com', 'instagram.com', 'twitter.com', 'linkedin.com', 'youtube.com',
+      'zomato.com', 'swiggy.com', 'justdial.com', 'indiamart.com', 'sulekha.com',
+      'urbanclap.com', 'google.com', 'yelp.com', 'tripadvisor.com'
+    ];
+    
+    if (skipDomains.some(skip => domain.includes(skip))) {
+      return [];
+    }
+    
     const settings = await Settings.findOne();
     let apiKey = settings?.apiKeys?.hunter || process.env.hunter;
     if (apiKey) apiKey = apiKey.replace(/["']/g, '').trim();
@@ -34,23 +45,15 @@ async function findEmails(domain, retries = 2) {
 }
 
 async function enrichWithEmails(businesses) {
-  logger.info(`Finding emails for ${businesses.length} businesses`);
+  logger.info(`Email finding disabled - skipping ${businesses.length} businesses`);
   
-  const enriched = [];
-  
-  for (const business of businesses) {
-    const emails = await findEmails(business.domain);
-    
-    enriched.push({
-      ...business,
-      emails
-    });
-    
-    // Rate limiting
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
+  // Return businesses without emails (Hunter API paused)
+  const enriched = businesses.map(b => ({
+    ...b,
+    emails: []
+  }));
 
-  logger.success(`Found emails for ${enriched.filter(b => b.emails.length > 0).length} businesses`);
+  logger.success(`Skipped email finding for ${businesses.length} businesses`);
   return enriched;
 }
 

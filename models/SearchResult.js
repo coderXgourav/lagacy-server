@@ -7,6 +7,12 @@ const searchResultSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true
+  },
   businessData: {
     name: { type: String, required: true },
     website: String,
@@ -37,6 +43,7 @@ const searchResultSchema = new mongoose.Schema({
 });
 
 // Compound indexes for efficient querying
+searchResultSchema.index({ userId: 1, searchId: 1 });
 searchResultSchema.index({ searchId: 1, 'downloadStatus.isIncludedInDownload': 1 });
 searchResultSchema.index({ 'businessData.isLegacy': 1, searchId: 1 });
 
