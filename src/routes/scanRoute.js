@@ -39,11 +39,10 @@ router.post('/', authMiddleware, async (req, res) => {
       return res.json({ message: 'No businesses found', count: 0, data: [] });
     }
 
-    // Step 2: Check domain age (process more than leadCap to account for failures)
-    const processLimit = Math.min(businesses.length, leadCap * 3);
-    const withDomainAge = await enrichWithDomainAge(businesses.slice(0, processLimit));
+    // Step 2: Check domain age for all businesses
+    const withDomainAge = await enrichWithDomainAge(businesses);
     
-    logger.info(`Successfully verified ${withDomainAge.length} domains out of ${processLimit} businesses`);
+    logger.info(`Successfully verified ${withDomainAge.length} domains`);
 
     // Step 3: Filter by domain date if specified
     let filteredByDate = withDomainAge;
@@ -131,7 +130,8 @@ router.post('/', authMiddleware, async (req, res) => {
         country: b.location.country,
         category: b.category,
         ownerName: b.ownerName,
-        isLegacy: b.isLegacy
+        isLegacy: b.isLegacy,
+        domainCreationDate: b.domainCreationDate
       },
       metadata: { source: 'google' }
     }));

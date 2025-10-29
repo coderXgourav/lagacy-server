@@ -100,12 +100,21 @@ async function findBusinessesFromGoogle(location, businessCategory, radius, apiK
       { lat: lat - outerOffset, lng: lng + outerOffset, name: 'SE2', radius: gridRadius }
     ];
     
-    const allBusinesses = [];
     const seenPlaceIds = new Set(); // Track place_ids across all grids
     
-    // Search each grid point with smaller radius
-    for (const point of gridPoints) {
-      const gridResults = await searchGoogleGrid(point.lat, point.lng, businessCategory, point.radius, apiKey, seenPlaceIds);
+    logger.info('⚡ Searching all 16 grids in parallel for maximum speed...');
+    
+    // Parallel search: All 16 grids at once
+    const gridSearchPromises = gridPoints.map(point => 
+      searchGoogleGrid(point.lat, point.lng, businessCategory, point.radius, apiKey, seenPlaceIds)
+        .then(results => ({ point, results }))
+    );
+    
+    const gridSearchResults = await Promise.all(gridSearchPromises);
+    
+    // Process results from all grids
+    const allBusinesses = [];
+    for (const { point, results: gridResults } of gridSearchResults) {
       allBusinesses.push(...gridResults);
       logger.info(`Grid ${point.name} (${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}): ${gridResults.length} new businesses`);
     }

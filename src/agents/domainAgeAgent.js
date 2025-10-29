@@ -124,35 +124,46 @@ async function checkDomainAge(domain, retries = 2) {
 async function enrichWithDomainAge(businesses) {
   logger.info(`Checking domain age for ${businesses.length} businesses`);
   
+  const BATCH_SIZE = 5;
   const enriched = [];
   
-  for (const business of businesses) {
-    const domain = extractDomain(business.website);
-    if (!domain) {
-      console.log(`⚠ Skipped ${business.website} - Invalid domain`);
-      continue;
-    }
+  for (let i = 0; i < businesses.length; i += BATCH_SIZE) {
+    const batch = businesses.slice(i, i + BATCH_SIZE);
+    console.log(`\n⚡ Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(businesses.length / BATCH_SIZE)} (${batch.length} domains)...`);
+    
+    const batchPromises = batch.map(async (business) => {
+      const domain = extractDomain(business.website);
+      if (!domain) {
+        console.log(`⚠ Skipped ${business.website} - Invalid domain`);
+        return null;
+      }
 
-    const domainInfo = await checkDomainAge(domain);
-    
-    if (!domainInfo?.creationDate) {
-      console.log(`✗ ${domain} - No creation date, skipping`);
-      continue;
-    }
-    
-    enriched.push({
-      ...business,
-      domain,
-      creationDate: domainInfo.creationDate,
-      ownerName: domainInfo.ownerName
+      const domainInfo = await checkDomainAge(domain);
+      
+      if (!domainInfo?.creationDate) {
+        console.log(`✗ ${domain} - No creation date, skipping`);
+        return null;
+      }
+      
+      console.log(`✓ ${domain} - Created: ${domainInfo.creationDate}`);
+      return {
+        ...business,
+        domain,
+        creationDate: domainInfo.creationDate,
+        ownerName: domainInfo.ownerName
+      };
     });
     
-    // Rate limiting
-    await new Promise(resolve => setTimeout(resolve, 500));
+    const batchResults = await Promise.all(batchPromises);
+    enriched.push(...batchResults.filter(r => r !== null));
+    
+    if (i + BATCH_SIZE < businesses.length) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
   }
 
   logger.success(`Enriched ${enriched.length} businesses with domain age`);
   return enriched;
 }
 
-module.exports = { enrichWithDomainAge };
+module.exports = { enrichWithDomainAge, checkDomainAge };

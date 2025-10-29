@@ -25,6 +25,7 @@ const searchResultSchema = new mongoose.Schema({
     category: String,
     industry: String,
     domainAge: Number,
+    domainCreationDate: String,
     registrar: String,
     ownerName: String,
     isLegacy: { type: Boolean, default: false }

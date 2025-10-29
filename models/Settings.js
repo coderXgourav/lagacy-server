@@ -21,6 +21,10 @@ const settingsSchema = new mongoose.Schema({
     whoisfreaks: {
       type: String,
       default: ''
+    },
+    facebook: {
+      type: String,
+      default: ''
     }
   },
   notifications: {
