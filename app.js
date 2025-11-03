@@ -14,8 +14,6 @@ app.use(cors({
   credentials: true,
 }));
 
-
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -30,7 +28,8 @@ const downloadRoute = require('./src/routes/downloadRoute');
 const historyRoute = require('./src/routes/historyRoute');
 const noWebsiteRoutes = require('./routes/noWebsiteRoutes');
 const lowRatingRoutes = require('./routes/lowRatingRoutes');
-// const outreachRoutes = require('./routes/outreach');
+const newDomainRoutes = require('./routes/newDomainRoutes');
+const newBusinessRoutes = require('./routes/newBusinessRoutes');
 
 // Routes
 app.get('/', (req, res) => {
@@ -53,6 +52,7 @@ app.use('/api/download', downloadRoute);
 app.use('/api/history', historyRoute);
 app.use('/api/no-website', noWebsiteRoutes);
 app.use('/api/low-rating', lowRatingRoutes);
-// app.use('/api/outreach', outreachRoutes);
+app.use('/api/new-domain', newDomainRoutes);
+app.use('/api/new-business', newBusinessRoutes);
 
 module.exports = app;

@@ -2,37 +2,28 @@ const axios = require('axios');
 const Settings = require('../models/Settings');
 
 function generateGridPoints(centerLat, centerLng, radius) {
-  const earthRadius = 6371000;
-  const gridRadius = radius * 0.45;
+  const blockSize = 400; // 400m = 2-3 blocks (balanced)
+  const gridRadius = Math.min(blockSize, Math.floor(radius * 0.3));
+  const gridCount = Math.ceil(radius / blockSize);
+  const points = [];
   
-  const points = [{ lat: centerLat, lng: centerLng }];
-  
-  // Inner ring: 9 points at 40% offset
-  const innerOffset = radius * 0.4;
-  for (let i = 0; i < 8; i++) {
-    const angle = (i * 45) * (Math.PI / 180);
-    const latOffset = (innerOffset / earthRadius) * (180 / Math.PI);
-    const lngOffset = (innerOffset / (earthRadius * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
-    points.push({
-      lat: centerLat + latOffset * Math.cos(angle),
-      lng: centerLng + lngOffset * Math.sin(angle)
-    });
+  for (let x = -gridCount; x <= gridCount; x++) {
+    for (let y = -gridCount; y <= gridCount; y++) {
+      const offsetLat = (x * blockSize) / 111320;
+      const offsetLng = (y * blockSize) / (111320 * Math.cos(centerLat * Math.PI / 180));
+      const distance = Math.sqrt(x*x + y*y) * blockSize;
+      
+      if (distance <= radius) {
+        points.push({
+          lat: centerLat + offsetLat,
+          lng: centerLng + offsetLng,
+          radius: gridRadius
+        });
+      }
+    }
   }
   
-  // Outer ring: 7 points at 70% offset
-  const outerOffset = radius * 0.7;
-  const outerAngles = [0, 51.43, 102.86, 154.29, 205.71, 257.14, 308.57];
-  for (const angleDeg of outerAngles) {
-    const angle = angleDeg * (Math.PI / 180);
-    const latOffset = (outerOffset / earthRadius) * (180 / Math.PI);
-    const lngOffset = (outerOffset / (earthRadius * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
-    points.push({
-      lat: centerLat + latOffset * Math.cos(angle),
-      lng: centerLng + lngOffset * Math.sin(angle)
-    });
-  }
-  
-  return points.map(p => ({ ...p, radius: gridRadius }));
+  return points;
 }
 
 async function geocodeLocation(address, apiKey) {
@@ -67,17 +58,15 @@ async function searchGrid(gridPoint, category, apiKey) {
       if (seenPlaceIds.has(place.place_id)) continue;
       seenPlaceIds.add(place.place_id);
       
-      // Collect ALL businesses with ratings (filter later)
-      if (place.rating) {
-        businesses.push({
-          place_id: place.place_id,
-          name: place.name,
-          rating: place.rating,
-          totalReviews: place.user_ratings_total || 0,
-          address: place.vicinity,
-          location: place.geometry?.location
-        });
-      }
+      // Collect ALL businesses (rating will be fetched from Details API)
+      businesses.push({
+        place_id: place.place_id,
+        name: place.name,
+        rating: place.rating || null,
+        totalReviews: place.user_ratings_total || 0,
+        address: place.vicinity,
+        location: place.geometry?.location
+      });
     }
   } catch (error) {
     console.error(`Grid search error:`, error.message);
@@ -114,23 +103,41 @@ exports.findBusinessesByRating = async ({ city, state, country, radius, category
     console.log(`📏 Radius: ${radius}m, Max Rating: ${maxRating}`);
     
     const gridPoints = generateGridPoints(centerLocation.lat, centerLocation.lng, radius);
-    console.log(`\n⚡ Searching ${gridPoints.length} grids in parallel...`);
+    console.log(`\n⚡ Searching ${gridPoints.length} grids in batches of 16...`);
     
-    const gridSearchPromises = gridPoints.map(grid => searchGrid(grid, category, apiKey));
-    const gridResults = await Promise.all(gridSearchPromises);
+    const batchSize = 16;
+    const gridResults = [];
+    
+    for (let i = 0; i < gridPoints.length; i += batchSize) {
+      const batch = gridPoints.slice(i, i + batchSize);
+      const batchNum = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(gridPoints.length / batchSize);
+      
+      console.log(`📦 Processing batch ${batchNum}/${totalBatches} (${batch.length} grids)...`);
+      
+      const batchPromises = batch.map(grid => searchGrid(grid, category, apiKey));
+      const batchResults = await Promise.all(batchPromises);
+      gridResults.push(...batchResults);
+      
+      // Cooldown between batches
+      if (i + batchSize < gridPoints.length) {
+        console.log(`⏳ Cooling down 2s before next batch...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
     
     const allBusinesses = gridResults.flat();
     const uniqueBusinesses = new Map();
     
-    // Deduplicate and filter by rating
+    // Deduplicate by place_id
     for (const business of allBusinesses) {
-      if (!uniqueBusinesses.has(business.place_id) && business.rating <= maxRating) {
+      if (!uniqueBusinesses.has(business.place_id)) {
         uniqueBusinesses.set(business.place_id, business);
       }
     }
     
-    console.log(`\n✅ Found ${allBusinesses.length} total businesses, ${uniqueBusinesses.size} unique with rating ≤ ${maxRating}`);
-    console.log(`🔍 Fetching detailed information...`);
+    console.log(`\n✅ Found ${allBusinesses.length} total, ${uniqueBusinesses.size} unique businesses`);
+    console.log(`🔍 Fetching ratings from Details API...`);
     
     const detailedBusinesses = [];
     let processed = 0;
@@ -141,6 +148,7 @@ exports.findBusinessesByRating = async ({ city, state, country, radius, category
       try {
         const details = await getPlaceDetails(placeId, apiKey);
         
+        // Filter by rating AFTER fetching details
         if (details.rating && details.rating <= maxRating) {
           detailedBusinesses.push({
             name: details.name,
@@ -162,9 +170,11 @@ exports.findBusinessesByRating = async ({ city, state, country, radius, category
         }
         
         processed++;
-        if (processed % 10 === 0) {
-          console.log(`📊 Processed ${processed}/${uniqueBusinesses.size} businesses...`);
+        if (processed % 20 === 0) {
+          console.log(`📊 Processed ${processed}/${uniqueBusinesses.size} (Found ${detailedBusinesses.length} with rating ≤ ${maxRating})`);
         }
+        
+        await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
         console.error(`Error fetching details for ${business.name}:`, error.message);
       }

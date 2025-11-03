@@ -1,6 +1,6 @@
 const LowRatingSearch = require('../models/LowRatingSearch');
 const LowRatingBusiness = require('../models/LowRatingBusiness');
-const googlePlacesService = require('../services/lowRatingGoogleService');
+const googlePlacesService = require('../services/lowRatingGoogleService.optimized');
 const logger = require('../src/utils/logger');
 
 exports.scanForLowRatingBusinesses = async (req, res) => {

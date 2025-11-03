@@ -58,9 +58,66 @@ async function searchGoogleGrid(lat, lng, businessCategory, radius, apiKey, seen
   return businesses;
 }
 
+function generateGridPoints(centerLat, centerLng, radius) {
+  const earthRadius = 6371000;
+  const gridRadius = radius * 0.15; // Reduced to 15%
+  
+  const points = [{ lat: centerLat, lng: centerLng }];
+  
+  // Ring 1: 8 points at 30%
+  const ring1Offset = radius * 0.3;
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * 45) * (Math.PI / 180);
+    const latOffset = (ring1Offset / earthRadius) * (180 / Math.PI);
+    const lngOffset = (ring1Offset / (earthRadius * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
+    points.push({
+      lat: centerLat + latOffset * Math.cos(angle),
+      lng: centerLng + lngOffset * Math.sin(angle)
+    });
+  }
+  
+  // Ring 2: 12 points at 55%
+  const ring2Offset = radius * 0.55;
+  for (let i = 0; i < 12; i++) {
+    const angle = (i * 30) * (Math.PI / 180);
+    const latOffset = (ring2Offset / earthRadius) * (180 / Math.PI);
+    const lngOffset = (ring2Offset / (earthRadius * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
+    points.push({
+      lat: centerLat + latOffset * Math.cos(angle),
+      lng: centerLng + lngOffset * Math.sin(angle)
+    });
+  }
+  
+  // Ring 3: 16 points at 80%
+  const ring3Offset = radius * 0.8;
+  for (let i = 0; i < 16; i++) {
+    const angle = (i * 22.5) * (Math.PI / 180);
+    const latOffset = (ring3Offset / earthRadius) * (180 / Math.PI);
+    const lngOffset = (ring3Offset / (earthRadius * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
+    points.push({
+      lat: centerLat + latOffset * Math.cos(angle),
+      lng: centerLng + lngOffset * Math.sin(angle)
+    });
+  }
+  
+  // Ring 4: 20 points at 100%
+  const ring4Offset = radius * 1.0;
+  for (let i = 0; i < 20; i++) {
+    const angle = (i * 18) * (Math.PI / 180);
+    const latOffset = (ring4Offset / earthRadius) * (180 / Math.PI);
+    const lngOffset = (ring4Offset / (earthRadius * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
+    points.push({
+      lat: centerLat + latOffset * Math.cos(angle),
+      lng: centerLng + lngOffset * Math.sin(angle)
+    });
+  }
+  
+  return points.map(p => ({ ...p, radius: gridRadius }));
+}
+
 async function findBusinessesFromGoogle(location, businessCategory, radius, apiKey) {
   try {
-    logger.info('Searching Google Places with grid search...');
+    logger.info('Searching Google Places with 25-grid parallel search...');
     
     const geocodeResponse = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
       params: { address: location, key: apiKey }
@@ -73,67 +130,33 @@ async function findBusinessesFromGoogle(location, businessCategory, radius, apiK
     const { lat, lng } = geocodeResponse.data.results[0].geometry.location;
     logger.info(`Location coordinates: ${lat}, ${lng}`);
     
-    // Create 16 grid points for maximum coverage
-    // Two rings: inner (40% offset) and outer (70% offset)
-    const innerOffset = (radius * 0.4) / 111320;
-    const outerOffset = (radius * 0.7) / 111320;
-    const gridRadius = Math.floor(radius * 0.45); // Each grid searches 45% radius
+    const gridPoints = generateGridPoints(lat, lng, radius);
+    logger.info(`⚡ Searching ${gridPoints.length} grids in parallel...`);
     
-    const gridPoints = [
-      // Inner ring (8 points)
-      { lat, lng, name: 'Center', radius: gridRadius },
-      { lat: lat + innerOffset, lng, name: 'N', radius: gridRadius },
-      { lat: lat - innerOffset, lng, name: 'S', radius: gridRadius },
-      { lat, lng: lng + innerOffset, name: 'E', radius: gridRadius },
-      { lat, lng: lng - innerOffset, name: 'W', radius: gridRadius },
-      { lat: lat + innerOffset, lng: lng + innerOffset, name: 'NE', radius: gridRadius },
-      { lat: lat + innerOffset, lng: lng - innerOffset, name: 'NW', radius: gridRadius },
-      { lat: lat - innerOffset, lng: lng + innerOffset, name: 'SE', radius: gridRadius },
-      { lat: lat - innerOffset, lng: lng - innerOffset, name: 'SW', radius: gridRadius },
-      // Outer ring (7 points)
-      { lat: lat + outerOffset, lng, name: 'N2', radius: gridRadius },
-      { lat: lat - outerOffset, lng, name: 'S2', radius: gridRadius },
-      { lat, lng: lng + outerOffset, name: 'E2', radius: gridRadius },
-      { lat, lng: lng - outerOffset, name: 'W2', radius: gridRadius },
-      { lat: lat + outerOffset, lng: lng + outerOffset, name: 'NE2', radius: gridRadius },
-      { lat: lat + outerOffset, lng: lng - outerOffset, name: 'NW2', radius: gridRadius },
-      { lat: lat - outerOffset, lng: lng + outerOffset, name: 'SE2', radius: gridRadius }
-    ];
+    // Each grid gets its own seenPlaceIds to avoid race conditions
+    const gridSearchPromises = gridPoints.map(point => {
+      const gridSeenPlaceIds = new Set();
+      return searchGoogleGrid(point.lat, point.lng, businessCategory, point.radius, apiKey, gridSeenPlaceIds);
+    });
     
-    const seenPlaceIds = new Set(); // Track place_ids across all grids
+    const gridResults = await Promise.all(gridSearchPromises);
+    const allBusinesses = gridResults.flat();
     
-    logger.info('⚡ Searching all 16 grids in parallel for maximum speed...');
-    
-    // Parallel search: All 16 grids at once
-    const gridSearchPromises = gridPoints.map(point => 
-      searchGoogleGrid(point.lat, point.lng, businessCategory, point.radius, apiKey, seenPlaceIds)
-        .then(results => ({ point, results }))
-    );
-    
-    const gridSearchResults = await Promise.all(gridSearchPromises);
-    
-    // Process results from all grids
-    const allBusinesses = [];
-    for (const { point, results: gridResults } of gridSearchResults) {
-      allBusinesses.push(...gridResults);
-      logger.info(`Grid ${point.name} (${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}): ${gridResults.length} new businesses`);
-    }
-    
-    // Deduplicate by website
-    const uniqueBusinesses = [];
-    const seenWebsites = new Set();
+    // Deduplicate by place_id first (more accurate than website)
+    const seenPlaceIds = new Set();
+    const uniqueByPlaceId = [];
     
     for (const business of allBusinesses) {
-      const normalized = business.website.toLowerCase().replace(/^https?:\/\/(www\.)?/, '');
-      if (!seenWebsites.has(normalized)) {
-        seenWebsites.add(normalized);
-        uniqueBusinesses.push(business);
-        console.log(`✓ Found: ${business.name} - ${business.website}`);
+      // Use website as unique identifier since we don't store place_id
+      const normalized = business.website.toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+      if (!seenPlaceIds.has(normalized)) {
+        seenPlaceIds.add(normalized);
+        uniqueByPlaceId.push(business);
       }
     }
 
-    logger.success(`Google Places: Found ${uniqueBusinesses.length} unique businesses from ${allBusinesses.length} total`);
-    return uniqueBusinesses;
+    logger.success(`Google Places: Found ${uniqueByPlaceId.length} unique businesses from ${allBusinesses.length} total`);
+    return uniqueByPlaceId;
   } catch (error) {
     logger.error('Google Places failed', error.message);
     return [];
@@ -237,7 +260,8 @@ async function findBusinesses(location, businessCategory = '', radius = 5000) {
     logger.success(`Total unique businesses: ${uniqueBusinesses.length} (Google: ${googleResults.length}, Foursquare: ${foursquareResults.length})`);
     return uniqueBusinesses;
   } catch (error) {
-    logger.error('Discovery agent failed', error.message);
+    logger.error('Discovery agent failed', error.stack || error.message);
+    console.error('Full error:', error);
     throw error;
   }
 }
