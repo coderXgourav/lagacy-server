@@ -1,6 +1,7 @@
 const Search = require('../models/Search');
 const Lead = require('../models/Lead');
 const SearchResult = require('../models/SearchResult');
+const { enrichWithDomainAge } = require('../src/agents/domainAgeAgent');
 
 // Get all searches
 exports.getAllSearches = async (req, res) => {
@@ -20,7 +21,7 @@ exports.getRecentSearches = async (req, res) => {
     const userId = req.user._id;
     const limit = parseInt(req.query.limit) || 10;
     const searches = await Search.find({ userId }).sort({ executedAt: -1 }).limit(limit);
-    res.json({ success: true, data: searches });
+    res.json({ success: true, searches });
   } catch (error) {
     console.error('Error fetching recent searches:', error);
     res.status(500).json({ success: false, message: 'Error fetching recent searches', error: error.message });
@@ -77,6 +78,7 @@ exports.updateSearchStatus = async (req, res) => {
     
     // Set download expiry for completed searches (30 days)
     if (status === 'completed') {
+      updateData.completedAt = new Date();
       updateData['downloadInfo.isDownloadable'] = true;
       updateData['downloadInfo.expiresAt'] = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     }
@@ -136,6 +138,7 @@ exports.storeSearchResults = async (req, res) => {
     await Search.findByIdAndUpdate(searchId, { 
       resultsCount: results.length,
       status: 'completed',
+      completedAt: new Date(),
       'downloadInfo.isDownloadable': true,
       'downloadInfo.expiresAt': new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     });
@@ -187,7 +190,8 @@ exports.getSearchResults = async (req, res) => {
           id: search._id,
           query: search.query,
           executedAt: search.executedAt,
-          resultsCount: search.resultsCount
+          resultsCount: search.resultsCount,
+          status: search.status
         },
         results: results.map(r => r.businessData)
       }
@@ -195,6 +199,35 @@ exports.getSearchResults = async (req, res) => {
   } catch (error) {
     console.error('Error fetching search results:', error);
     res.status(500).json({ success: false, message: 'Error fetching search results', error: error.message });
+  }
+};
+
+// Cancel search
+exports.cancelSearch = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const search = await Search.findOne({ _id: req.params.id, userId });
+    
+    if (!search) {
+      return res.status(404).json({ success: false, message: 'Search not found' });
+    }
+    
+    if (search.status === 'completed' || search.status === 'failed') {
+      return res.json({ success: false, message: 'Search already completed' });
+    }
+    
+    search.cancelRequested = true;
+    if (search.status === 'pending') {
+      search.status = 'cancelled';
+      search.completedAt = new Date();
+    }
+    await search.save();
+    
+    console.log(`🚫 Cancellation requested for search ${search._id}`);
+    res.json({ success: true, message: 'Cancellation requested' });
+  } catch (error) {
+    console.error('Error cancelling search:', error);
+    res.status(500).json({ success: false, message: 'Error cancelling search', error: error.message });
   }
 };
 

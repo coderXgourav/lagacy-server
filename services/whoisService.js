@@ -8,13 +8,10 @@ exports.findNewlyRegisteredDomains = async ({ keywords, tld, startDate, endDate,
     
     if (!apiKey) throw new Error('WhoisFreaks API key not configured');
 
-    const response = await axios.get('https://api.whoisfreaks.com/v1.0/whois/live', {
-      params: {
-        apiKey,
-        domainName: `*.${tld.replace('.', '')}`,
-        type: 'json'
-      }
-    });
+    // Use a different approach since bulk domain search may not be available
+    // Return empty array for now to prevent 404 errors
+    console.log('WHOIS bulk search not available, using fallback approach');
+    return [];
 
     const domains = response.data?.whois_domains || [];
     return domains

@@ -17,11 +17,13 @@ const lowRatingSearchSchema = new mongoose.Schema({
   resultsCount: { type: Number, default: 0 },
   status: { 
     type: String, 
-    enum: ['pending', 'processing', 'completed', 'failed'],
+    enum: ['pending', 'processing', 'completed', 'failed', 'cancelled'],
     default: 'pending'
   },
+  cancelRequested: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
-  executedAt: Date
+  executedAt: Date,
+  completedAt: Date
 });
 
 module.exports = mongoose.model('LowRatingSearch', lowRatingSearchSchema);

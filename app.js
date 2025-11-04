@@ -30,6 +30,7 @@ const noWebsiteRoutes = require('./routes/noWebsiteRoutes');
 const lowRatingRoutes = require('./routes/lowRatingRoutes');
 const newDomainRoutes = require('./routes/newDomainRoutes');
 const newBusinessRoutes = require('./routes/newBusinessRoutes');
+const domainScraperRoutes = require('./routes/domainScraperRoutes');
 
 // Routes
 app.get('/', (req, res) => {
@@ -54,5 +55,6 @@ app.use('/api/no-website', noWebsiteRoutes);
 app.use('/api/low-rating', lowRatingRoutes);
 app.use('/api/new-domain', newDomainRoutes);
 app.use('/api/new-business', newBusinessRoutes);
+app.use('/api/domain-scraper', domainScraperRoutes);
 
 module.exports = app;

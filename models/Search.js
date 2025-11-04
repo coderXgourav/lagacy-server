@@ -32,9 +32,10 @@ const searchSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'processing', 'completed', 'failed'],
+    enum: ['pending', 'processing', 'completed', 'failed', 'cancelled'],
     default: 'pending'
   },
+  cancelRequested: { type: Boolean, default: false },
   apiUsed: {
     type: String,
     enum: ['whoisxml', 'hunter', 'google', 'multiple'],
@@ -43,6 +44,9 @@ const searchSchema = new mongoose.Schema({
   executedAt: {
     type: Date,
     default: Date.now
+  },
+  completedAt: {
+    type: Date
   },
   errorMessage: {
     type: String,

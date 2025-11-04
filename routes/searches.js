@@ -31,6 +31,9 @@ router.post('/results', authMiddleware, searchController.storeSearchResults);
 // PUT /api/searches/:id - Update search status
 router.put('/:id', authMiddleware, searchController.updateSearchStatus);
 
+// POST /api/searches/:id/cancel - Cancel search
+router.post('/:id/cancel', authMiddleware, searchController.cancelSearch);
+
 // DELETE /api/searches/:id - Delete search
 router.delete('/:id', authMiddleware, searchController.deleteSearch);
 

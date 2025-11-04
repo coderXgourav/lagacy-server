@@ -59,60 +59,37 @@ async function searchGoogleGrid(lat, lng, businessCategory, radius, apiKey, seen
 }
 
 function generateGridPoints(centerLat, centerLng, radius) {
-  const earthRadius = 6371000;
-  const gridRadius = radius * 0.15; // Reduced to 15%
+  let numGrids;
+  if (radius <= 1000) numGrids = 16;
+  else if (radius <= 5000) numGrids = 20;
+  else if (radius <= 10000) numGrids = 25;
+  else numGrids = 50;
   
-  const points = [{ lat: centerLat, lng: centerLng }];
+  const searchRadius = radius / 2;
+  const points = [{ lat: centerLat, lng: centerLng, radius: searchRadius }];
   
-  // Ring 1: 8 points at 30%
-  const ring1Offset = radius * 0.3;
-  for (let i = 0; i < 8; i++) {
-    const angle = (i * 45) * (Math.PI / 180);
-    const latOffset = (ring1Offset / earthRadius) * (180 / Math.PI);
-    const lngOffset = (ring1Offset / (earthRadius * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
-    points.push({
-      lat: centerLat + latOffset * Math.cos(angle),
-      lng: centerLng + lngOffset * Math.sin(angle)
-    });
+  const remaining = numGrids - 1;
+  const rings = 3;
+  const pointsPerRing = Math.ceil(remaining / rings);
+  
+  for (let ring = 1; ring <= rings && points.length < numGrids; ring++) {
+    const ringRadius = (radius * ring) / (rings + 1);
+    const pointsInThisRing = Math.min(pointsPerRing, numGrids - points.length);
+    
+    for (let i = 0; i < pointsInThisRing; i++) {
+      const angle = (i * 360 / pointsInThisRing) * (Math.PI / 180);
+      const latOffset = (ringRadius / 111320) * Math.cos(angle);
+      const lngOffset = (ringRadius / (111320 * Math.cos(centerLat * Math.PI / 180))) * Math.sin(angle);
+      
+      points.push({
+        lat: centerLat + latOffset,
+        lng: centerLng + lngOffset,
+        radius: searchRadius
+      });
+    }
   }
   
-  // Ring 2: 12 points at 55%
-  const ring2Offset = radius * 0.55;
-  for (let i = 0; i < 12; i++) {
-    const angle = (i * 30) * (Math.PI / 180);
-    const latOffset = (ring2Offset / earthRadius) * (180 / Math.PI);
-    const lngOffset = (ring2Offset / (earthRadius * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
-    points.push({
-      lat: centerLat + latOffset * Math.cos(angle),
-      lng: centerLng + lngOffset * Math.sin(angle)
-    });
-  }
-  
-  // Ring 3: 16 points at 80%
-  const ring3Offset = radius * 0.8;
-  for (let i = 0; i < 16; i++) {
-    const angle = (i * 22.5) * (Math.PI / 180);
-    const latOffset = (ring3Offset / earthRadius) * (180 / Math.PI);
-    const lngOffset = (ring3Offset / (earthRadius * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
-    points.push({
-      lat: centerLat + latOffset * Math.cos(angle),
-      lng: centerLng + lngOffset * Math.sin(angle)
-    });
-  }
-  
-  // Ring 4: 20 points at 100%
-  const ring4Offset = radius * 1.0;
-  for (let i = 0; i < 20; i++) {
-    const angle = (i * 18) * (Math.PI / 180);
-    const latOffset = (ring4Offset / earthRadius) * (180 / Math.PI);
-    const lngOffset = (ring4Offset / (earthRadius * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
-    points.push({
-      lat: centerLat + latOffset * Math.cos(angle),
-      lng: centerLng + lngOffset * Math.sin(angle)
-    });
-  }
-  
-  return points.map(p => ({ ...p, radius: gridRadius }));
+  return points.slice(0, numGrids);
 }
 
 async function findBusinessesFromGoogle(location, businessCategory, radius, apiKey) {

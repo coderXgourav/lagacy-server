@@ -18,7 +18,13 @@ const newDomainSchema = new mongoose.Schema({
   },
   nameservers: [String],
   status: { type: String, default: 'active' },
+  source: { type: String, enum: ['whois', 'certificate_transparency'], default: 'whois' },
   createdAt: { type: Date, default: Date.now }
 });
+
+// Index for efficient queries
+newDomainSchema.index({ userId: 1, createdAt: -1 });
+newDomainSchema.index({ domainName: 1 });
+newDomainSchema.index({ source: 1 });
 
 module.exports = mongoose.model('NewDomain', newDomainSchema);

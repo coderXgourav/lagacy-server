@@ -12,6 +12,7 @@ const SearchResult = require('../../models/SearchResult');
 const logger = require('../utils/logger');
 
 router.post('/', authMiddleware, async (req, res) => {
+  let search;
   try {
     const userId = req.user._id;
     const { city, state, country, radius = 5000, businessCategory, leadCap = 50, domainYear, filterMode = 'before' } = req.body;
@@ -29,6 +30,25 @@ router.post('/', authMiddleware, async (req, res) => {
     const location = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
     logger.info('Starting scan pipeline', { city, state, country, radius, businessCategory, leadCap, domainDateFilter });
 
+    // Create search record first
+    search = await Search.create({
+      userId,
+      query: location,
+      searchType: 'location',
+      filters: { city, state, country, radius, category: businessCategory, domainYear, filterMode },
+      resultsCount: 0,
+      status: 'processing',
+      apiUsed: 'google'
+    });
+
+    // Return searchId immediately so frontend can cancel
+    res.json({
+      message: 'Search started',
+      searchId: search._id
+    });
+
+    console.log(`🚀 Search ${search._id} started, processing in background...`);
+
     // Step 1: Discover businesses
     const category = businessCategory === 'all' ? '' : businessCategory;
     const businesses = await findBusinesses(location, category, radius);
@@ -39,8 +59,18 @@ router.post('/', authMiddleware, async (req, res) => {
       return res.json({ message: 'No businesses found', count: 0, data: [] });
     }
 
+    // Check cancellation
+    let freshSearch = await Search.findById(search._id);
+    if (freshSearch.cancelRequested) {
+      search.status = 'cancelled';
+      search.completedAt = new Date();
+      await search.save();
+      console.log(`🚫 Search cancelled after discovery`);
+      return res.json({ message: 'Search cancelled', searchId: search._id });
+    }
+
     // Step 2: Check domain age for all businesses
-    const withDomainAge = await enrichWithDomainAge(businesses);
+    const withDomainAge = await enrichWithDomainAge(businesses, search);
     
     logger.info(`Successfully verified ${withDomainAge.length} domains`);
 
@@ -74,13 +104,36 @@ router.post('/', authMiddleware, async (req, res) => {
       logger.info(`Applied lead cap: ${leadCap} businesses`);
     }
 
+    // Check cancellation
+    freshSearch = await Search.findById(search._id);
+    if (freshSearch.cancelRequested) {
+      search.status = 'cancelled';
+      search.completedAt = new Date();
+      await search.save();
+      console.log(`🚫 Search cancelled after domain check`);
+      return res.json({ message: 'Search cancelled', searchId: search._id });
+    }
+
     // Step 5: Find contact emails
     const withEmails = await enrichWithEmails(markedBusinesses);
 
     // Step 6: Save to MongoDB
     const savedBusinesses = [];
 
-    for (const business of withEmails) {
+    for (let i = 0; i < withEmails.length; i++) {
+      // Check cancellation every 10 businesses
+      if (i % 10 === 0) {
+        freshSearch = await Search.findById(search._id);
+        if (freshSearch.cancelRequested) {
+          search.status = 'cancelled';
+          search.completedAt = new Date();
+          await search.save();
+          console.log(`🚫 Search cancelled during save at ${i}/${withEmails.length}`);
+          return res.json({ message: 'Search cancelled', searchId: search._id });
+        }
+      }
+      
+      const business = withEmails[i];
       const businessDoc = new Business({
         businessName: business.name,
         category: business.category,
@@ -100,20 +153,15 @@ router.post('/', authMiddleware, async (req, res) => {
 
     logger.success(`Scan complete. Saved ${savedBusinesses.length} legacy businesses`);
 
-    // Save to new Search model
-    const search = await Search.create({
-      userId,
-      query: location,
-      searchType: 'location',
-      filters: { city, state, country, radius, category: businessCategory, domainYear, filterMode },
-      resultsCount: savedBusinesses.length,
-      status: 'completed',
-      apiUsed: 'google',
-      downloadInfo: {
-        isDownloadable: true,
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-      }
-    });
+    // Update search with results
+    search.resultsCount = savedBusinesses.length;
+    search.status = 'completed';
+    search.completedAt = new Date();
+    search.downloadInfo = {
+      isDownloadable: true,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    };
+    await search.save();
 
     // Store results
     const searchResults = savedBusinesses.map(b => ({
@@ -145,14 +193,16 @@ router.post('/', authMiddleware, async (req, res) => {
     });
     await searchHistory.save();
 
-    res.json({
-      message: 'Scan complete',
-      count: savedBusinesses.length,
-      searchId: search._id,
-      data: savedBusinesses
-    });
+    // Don't send response - already sent at start
+    console.log(`✅ Search ${search._id} completed with ${savedBusinesses.length} results`);
   } catch (error) {
     logger.error('Scan failed', error.message);
+    
+    if (search) {
+      search.status = 'failed';
+      search.completedAt = new Date();
+      await search.save();
+    }
     
     // Save failed search history
     try {
@@ -169,7 +219,9 @@ router.post('/', authMiddleware, async (req, res) => {
       logger.error('Failed to save search history', historyError.message);
     }
     
-    res.status(500).json({ error: 'Scan failed', details: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Scan failed', details: error.message });
+    }
   }
 });
 

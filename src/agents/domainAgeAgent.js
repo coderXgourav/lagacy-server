@@ -78,10 +78,9 @@ async function checkDomainAge(domain, retries = 2) {
       console.log(`✗ RDAP failed for ${domain}`);
     }
     
-    // Try WhoisFreaks (free tier: 1000/month)
-    let whoisFreaksKey = settings?.apiKeys?.whoisfreaks || process.env.WHOISFREAKS_API_KEY;
+    // Try WhoisFreaks if RDAP fails
+    const whoisFreaksKey = settings?.apiKeys?.whoisfreaks;
     if (whoisFreaksKey) {
-      whoisFreaksKey = whoisFreaksKey.replace(/["']/g, '').trim();
       try {
         const result = await checkWhoisFreaks(domain, whoisFreaksKey);
         if (result.creationDate) {
@@ -93,24 +92,21 @@ async function checkDomainAge(domain, retries = 2) {
       }
     }
     
-    
-    // Fallback to WhoisXML only if all free APIs fail (conserve credits)
-    let apiKey = settings?.apiKeys?.whoisxml || process.env.whoisxml;
-    if (apiKey) apiKey = apiKey.replace(/["']/g, '').trim();
-    
-    if (apiKey) {
+    // Try WhoisXML if both RDAP and WhoisFreaks fail
+    const whoisXmlKey = settings?.apiKeys?.whoisxml;
+    if (whoisXmlKey) {
       try {
-        const result = await checkWhoisXML(domain, apiKey);
+        const result = await checkWhoisXML(domain, whoisXmlKey);
         if (result.creationDate) {
           console.log(`✓ WhoisXML: ${domain} created: ${result.creationDate}`);
           return result;
         }
       } catch (error) {
-        console.log(`✗ WhoisXML failed for ${domain}: ${error.response?.status || error.message}`);
+        console.log(`✗ WhoisXML failed for ${domain}`);
       }
     }
     
-    console.log(`✗ All WHOIS APIs failed for ${domain}`);
+    console.log(`✗ All methods failed for ${domain}`);
     return null;
   } catch (error) {
     if (retries > 0) {
@@ -121,13 +117,22 @@ async function checkDomainAge(domain, retries = 2) {
   }
 }
 
-async function enrichWithDomainAge(businesses) {
+async function enrichWithDomainAge(businesses, search = null) {
   logger.info(`Checking domain age for ${businesses.length} businesses`);
   
-  const BATCH_SIZE = 5;
+  const BATCH_SIZE = 3;
   const enriched = [];
   
   for (let i = 0; i < businesses.length; i += BATCH_SIZE) {
+    // Check if search was cancelled
+    if (search) {
+      const freshSearch = await search.constructor.findById(search._id);
+      if (freshSearch?.cancelRequested) {
+        console.log('⚠️ Search cancelled, stopping domain age check');
+        break;
+      }
+    }
+    
     const batch = businesses.slice(i, i + BATCH_SIZE);
     console.log(`\n⚡ Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(businesses.length / BATCH_SIZE)} (${batch.length} domains)...`);
     
@@ -158,7 +163,7 @@ async function enrichWithDomainAge(businesses) {
     enriched.push(...batchResults.filter(r => r !== null));
     
     if (i + BATCH_SIZE < businesses.length) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
   }
 

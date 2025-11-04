@@ -25,6 +25,10 @@ const settingsSchema = new mongoose.Schema({
     facebook: {
       type: String,
       default: ''
+    },
+    yelp: {
+      type: String,
+      default: ''
     }
   },
   notifications: {

@@ -17,10 +17,12 @@ const newBusinessSearchSchema = new mongoose.Schema({
   resultsCount: { type: Number, default: 0 },
   status: {
     type: String,
-    enum: ['pending', 'processing', 'completed', 'failed'],
+    enum: ['pending', 'processing', 'completed', 'failed', 'cancelled'],
     default: 'pending'
   },
-  createdAt: { type: Date, default: Date.now }
+  cancelRequested: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+  completedAt: Date
 });
 
 module.exports = mongoose.model('NewBusinessSearch', newBusinessSearchSchema);

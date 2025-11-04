@@ -19,6 +19,8 @@ const lowRatingBusinessSchema = new mongoose.Schema({
   phone: String,
   email: String,
   website: String,
+  yelpUrl: String,
+  source: { type: String, enum: ['google', 'yelp'], default: 'google' },
   address: String,
   city: String,
   state: String,

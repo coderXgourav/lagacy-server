@@ -4,11 +4,12 @@ const { findBusinessesWithoutWebsite, findBusinessesFromFoursquare } = require('
 const facebookService = require('../services/facebookService');
 
 exports.scanForBusinesses = async (req, res) => {
+  let search;
   try {
     const { city, state, country, radius, niche, leads } = req.body;
     const userId = req.user._id;
 
-    const search = await NoWebsiteSearch.create({
+    search = await NoWebsiteSearch.create({
       userId,
       city,
       state,
@@ -19,6 +20,14 @@ exports.scanForBusinesses = async (req, res) => {
       status: 'processing',
       executedAt: new Date()
     });
+
+    // Return searchId immediately
+    res.json({
+      message: 'Search started',
+      searchId: search._id
+    });
+
+    console.log(`🚀 Search ${search._id} started, processing in background...`);
 
     // Get coordinates for Foursquare
     const Settings = require('../models/Settings');
@@ -33,6 +42,16 @@ exports.scanForBusinesses = async (req, res) => {
     });
     const { lat, lng } = geocodeResponse.data.results[0].geometry.location;
     
+    // Check if cancelled
+    let freshSearch = await NoWebsiteSearch.findById(search._id);
+    if (freshSearch.cancelRequested) {
+      search.status = 'cancelled';
+      search.completedAt = new Date();
+      await search.save();
+      console.log(`🚫 Search cancelled before API calls`);
+      return;
+    }
+
     // Search both Google Places and Foursquare
     const [googleBusinesses, foursquareBusinesses] = await Promise.all([
       findBusinessesWithoutWebsite({
@@ -45,6 +64,14 @@ exports.scanForBusinesses = async (req, res) => {
       }),
       findBusinessesFromFoursquare(lat, lng, niche, radius)
     ]);
+
+    // Check if cancelled after search
+    if (req.aborted) {
+      search.status = 'cancelled';
+      search.completedAt = new Date();
+      await search.save();
+      return;
+    }
     
     // Combine and deduplicate by phone
     console.log(`\n🔀 Combining results from Google Places and Foursquare...`);
@@ -76,12 +103,7 @@ exports.scanForBusinesses = async (req, res) => {
       search.status = 'completed';
       search.resultsCount = 0;
       await search.save();
-      return res.json({
-        success: true,
-        message: 'No businesses found',
-        count: 0,
-        data: []
-      });
+      return;
     }
 
     console.log(`🔍 Step 4: Enriching with Facebook data...`);
@@ -90,6 +112,18 @@ exports.scanForBusinesses = async (req, res) => {
     let facebookFailed = 0;
 
     for (let i = 0; i < businesses.length; i++) {
+      // Check cancellation every 5 businesses
+      if (i % 5 === 0) {
+        freshSearch = await NoWebsiteSearch.findById(search._id);
+        if (freshSearch.cancelRequested) {
+          search.status = 'cancelled';
+          search.completedAt = new Date();
+          await search.save();
+          console.log(`🚫 Search cancelled during enrichment at ${i}/${businesses.length}`);
+          return;
+        }
+      }
+      
       const business = businesses[i];
       try {
         // Try Facebook API enrichment
@@ -151,6 +185,7 @@ exports.scanForBusinesses = async (req, res) => {
 
     search.resultsCount = enrichedBusinesses.length;
     search.status = 'completed';
+    search.completedAt = new Date();
     await search.save();
 
     console.log(`${'='.repeat(80)}`);
@@ -166,19 +201,15 @@ exports.scanForBusinesses = async (req, res) => {
     console.log(`   - Search ID: ${search._id}`);
     console.log(`${'='.repeat(80)}\n`);
 
-    res.json({
-      success: true,
-      message: `Found ${enrichedBusinesses.length} businesses without websites`,
-      count: enrichedBusinesses.length,
-      data: enrichedBusinesses
-    });
+    console.log(`✅ Search ${search._id} completed with ${enrichedBusinesses.length} results`);
 
   } catch (error) {
     console.error('Scan error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Scan failed'
-    });
+    if (search) {
+      search.status = 'failed';
+      search.completedAt = new Date();
+      await search.save();
+    }
   }
 };
 
@@ -225,7 +256,15 @@ exports.getSearchResults = async (req, res) => {
     res.json({
       success: true,
       data: {
-        search,
+        search: {
+          id: search._id,
+          city: search.city,
+          state: search.state,
+          country: search.country,
+          executedAt: search.executedAt,
+          resultsCount: search.resultsCount,
+          status: search.status
+        },
         results: businesses
       }
     });
@@ -234,6 +273,31 @@ exports.getSearchResults = async (req, res) => {
       success: false,
       message: error.message
     });
+  }
+};
+
+exports.cancelSearch = async (req, res) => {
+  try {
+    const { searchId } = req.params;
+    const userId = req.user._id;
+    const search = await NoWebsiteSearch.findOne({ _id: searchId, userId });
+    
+    if (!search) return res.status(404).json({ success: false, message: 'Search not found' });
+    if (search.status === 'completed' || search.status === 'failed') {
+      return res.json({ success: false, message: 'Search already completed' });
+    }
+    
+    search.cancelRequested = true;
+    if (search.status === 'pending') {
+      search.status = 'cancelled';
+      search.completedAt = new Date();
+    }
+    await search.save();
+    
+    console.log(`🚫 Cancellation requested for search ${search._id}`);
+    res.json({ success: true, message: 'Cancellation requested' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
