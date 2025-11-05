@@ -25,7 +25,7 @@ const scrapedDomainSchema = new mongoose.Schema({
   },
   enrichmentSource: {
     type: String,
-    enum: ['RDAP', 'WhoisFreaks', 'WhoisXML', 'CSV'],
+    enum: ['RDAP', 'CSV'],
     default: 'CSV'
   },
   scrapedAt: {

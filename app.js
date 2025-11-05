@@ -1,11 +1,15 @@
 const express = require('express');
 const cors = require('cors');
 const connectDB = require('./conf/database');
+const domainScraperScheduler = require('./services/domainScraperScheduler');
 
 const app = express();
 
 // Connect to MongoDB
 connectDB();
+
+// Start domain scraper scheduler
+domainScraperScheduler.start();
 
 // Middleware
 app.use(cors({
