@@ -1,6 +1,31 @@
 const axios = require('axios');
 const Settings = require('../models/Settings');
 
+function generateGridPoints(centerLat, centerLng, radius) {
+  const blockSize = 800;
+  const gridRadius = Math.min(blockSize, Math.floor(radius * 0.3));
+  const gridCount = Math.ceil(radius / blockSize);
+  const points = [];
+  
+  for (let x = -gridCount; x <= gridCount; x++) {
+    for (let y = -gridCount; y <= gridCount; y++) {
+      const offsetLat = (x * blockSize) / 111320;
+      const offsetLng = (y * blockSize) / (111320 * Math.cos(centerLat * Math.PI / 180));
+      const distance = Math.sqrt(x*x + y*y) * blockSize;
+      
+      if (distance <= radius) {
+        points.push({
+          lat: centerLat + offsetLat,
+          lng: centerLng + offsetLng,
+          radius: gridRadius
+        });
+      }
+    }
+  }
+  
+  return points;
+}
+
 async function searchGoogleGridNoWebsite(lat, lng, businessCategory, radius, apiKey, seenPlaceIds, leadLimit, minRating = null, maxRating = null) {
   const businesses = [];
   let nextPageToken = null;
@@ -130,98 +155,69 @@ async function findBusinessesWithoutWebsite({ city, state, country, radius, cate
     const { lat, lng } = geocodeResponse.data.results[0].geometry.location;
     console.log(`   ✓ Coordinates: ${lat.toFixed(4)}, ${lng.toFixed(4)}\n`);
     
-    console.log(`🔍 Step 2: Starting 16-grid search strategy...`);
-    // 16-grid search strategy (same as legacy page)
-    const innerOffset = (radius * 0.4) / 111320;
-    const outerOffset = (radius * 0.7) / 111320;
-    const gridRadius = Math.floor(radius * 0.45);
-    
-    const gridPoints = [
-      { lat, lng, name: 'Center', radius: gridRadius },
-      { lat: lat + innerOffset, lng, name: 'N', radius: gridRadius },
-      { lat: lat - innerOffset, lng, name: 'S', radius: gridRadius },
-      { lat, lng: lng + innerOffset, name: 'E', radius: gridRadius },
-      { lat, lng: lng - innerOffset, name: 'W', radius: gridRadius },
-      { lat: lat + innerOffset, lng: lng + innerOffset, name: 'NE', radius: gridRadius },
-      { lat: lat + innerOffset, lng: lng - innerOffset, name: 'NW', radius: gridRadius },
-      { lat: lat - innerOffset, lng: lng + innerOffset, name: 'SE', radius: gridRadius },
-      { lat: lat - innerOffset, lng: lng - innerOffset, name: 'SW', radius: gridRadius },
-      { lat: lat + outerOffset, lng, name: 'N2', radius: gridRadius },
-      { lat: lat - outerOffset, lng, name: 'S2', radius: gridRadius },
-      { lat, lng: lng + outerOffset, name: 'E2', radius: gridRadius },
-      { lat, lng: lng - outerOffset, name: 'W2', radius: gridRadius },
-      { lat: lat + outerOffset, lng: lng + outerOffset, name: 'NE2', radius: gridRadius },
-      { lat: lat + outerOffset, lng: lng - outerOffset, name: 'NW2', radius: gridRadius },
-      { lat: lat - outerOffset, lng: lng + outerOffset, name: 'SE2', radius: gridRadius }
-    ];
+    console.log(`🔍 Step 2: Generating dynamic grid points...`);
+    const gridPoints = generateGridPoints(lat, lng, radius);
+    console.log(`   ✓ Generated ${gridPoints.length} grid points for comprehensive coverage\n`);
     
     const seenPlaceIds = new Set();
     let noWebsiteCount = 0;
     let socialMediaCount = 0;
     
-    console.log(`   ⚡ Searching all 16 grids in parallel for maximum speed...\n`);
+    console.log(`⚡ Step 3: Searching ${gridPoints.length} grids in batches of 16...\n`);
     
-    // Parallel search: All 16 grids at once
-    const gridSearchPromises = gridPoints.map(point => 
-      searchGoogleGridNoWebsite(
-        point.lat,
-        point.lng,
-        category,
-        point.radius,
-        apiKey,
-        seenPlaceIds,
-        limit,
-        null, // No rating filter for parallel search
-        null
-      ).then(results => ({ point, results }))
-    );
+    const batchSize = 16;
+    const allGridResults = [];
     
-    const gridSearchResults = await Promise.all(gridSearchPromises);
+    for (let i = 0; i < gridPoints.length; i += batchSize) {
+      const batch = gridPoints.slice(i, i + batchSize);
+      const batchNum = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(gridPoints.length / batchSize);
+      
+      console.log(`📦 Processing batch ${batchNum}/${totalBatches} (${batch.length} grids)...`);
+      
+      const batchPromises = batch.map(point => 
+        searchGoogleGridNoWebsite(
+          point.lat,
+          point.lng,
+          category,
+          point.radius,
+          apiKey,
+          seenPlaceIds,
+          limit,
+          null,
+          null
+        ).then(results => ({ results }))
+      );
+      
+      const batchResults = await Promise.all(batchPromises);
+      allGridResults.push(...batchResults);
+      
+      if (i + batchSize < gridPoints.length) {
+        console.log(`⏳ Cooling down 2s before next batch...\n`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+    
+    const gridSearchResults = allGridResults;
     
     // Process results from all grids
     const allBusinesses = [];
-    const gridRatings = [];
     
-    for (let i = 0; i < gridSearchResults.length; i++) {
-      const { point, results: gridResults } = gridSearchResults[i];
-      
-      // Calculate average rating for this grid
-      const ratingsInGrid = gridResults.filter(b => b.rating > 0).map(b => b.rating);
-      const avgRating = ratingsInGrid.length > 0
-        ? (ratingsInGrid.reduce((a, b) => a + b, 0) / ratingsInGrid.length).toFixed(2)
-        : 0;
-      
-      gridRatings.push({ grid: i + 1, avgRating: parseFloat(avgRating), count: gridResults.length });
+    for (const { results: gridResults } of gridSearchResults) {
       allBusinesses.push(...gridResults);
       
-      // Count social media vs no website
       const socialInGrid = gridResults.filter(b => b.socialPage).length;
       const noWebInGrid = gridResults.length - socialInGrid;
-      
-      const ratingInfo = avgRating > 0 ? ` | Avg rating: ${avgRating}` : '';
-      
-      console.log(`   Grid ${point.name.padEnd(6)} (${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}): ${gridResults.length} businesses | No web: ${noWebInGrid} | Social: ${socialInGrid}${ratingInfo}`);
       
       noWebsiteCount += noWebInGrid;
       socialMediaCount += socialInGrid;
     }
     
-    // Calculate overall rating distribution
-    const finalAvgRating = allBusinesses.filter(b => b.rating > 0).length > 0
-      ? (allBusinesses.filter(b => b.rating > 0).reduce((a, b) => a + b.rating, 0) / allBusinesses.filter(b => b.rating > 0).length).toFixed(2)
-      : 0;
-    const finalRatings = allBusinesses.filter(b => b.rating > 0).map(b => b.rating);
+    console.log(`\n✅ Found ${allBusinesses.length} total businesses`);
+    console.log(`   - ${noWebsiteCount} with NO website at all`);
+    console.log(`   - ${socialMediaCount} with social media only\n`);
     
-    console.log(`\n   ✓ Grid search complete: ${allBusinesses.length} total businesses found`);
-    console.log(`     - ${noWebsiteCount} with NO website at all`);
-    console.log(`     - ${socialMediaCount} with social media only`);
-    console.log(`     - Overall avg rating: ${finalAvgRating}`);
-    if (finalRatings.length > 0) {
-      console.log(`     - Rating range: ${Math.min(...finalRatings).toFixed(1)} - ${Math.max(...finalRatings).toFixed(1)}`);
-    }
-    console.log();
-    
-    console.log(`🛡️  Step 3: Deduplicating by phone number...`);
+    console.log(`🛡️  Step 4: Deduplicating by phone number...`);
     // Deduplicate by phone number
     const uniqueBusinesses = [];
     const seenPhones = new Set();
@@ -249,10 +245,10 @@ async function findBusinessesWithoutWebsite({ city, state, country, radius, cate
     console.log(`${'='.repeat(80)}`);
     console.log(`📊 Results Summary:`);
     console.log(`   - Total scanned: ${allBusinesses.length}`);
-    console.log(`   - After deduplication: ${uniqueBusinesses.length}`);
-    console.log(`   - Returning (lead cap): ${finalResults.length}`);
-    console.log(`   - Businesses with no website: ${finalResults.filter(b => !b.socialPage).length}`);
-    console.log(`   - Businesses with social media only: ${finalResults.filter(b => b.socialPage).length}`);
+    console.log(`   - Unique businesses: ${uniqueBusinesses.length}`);
+    console.log(`   - Returning: ${finalResults.length}`);
+    console.log(`   - No website: ${finalResults.filter(b => !b.socialPage).length}`);
+    console.log(`   - Social media only: ${finalResults.filter(b => b.socialPage).length}`);
     console.log(`${'='.repeat(80)}\n`);
     
     return finalResults;

@@ -169,11 +169,48 @@ class DomainScraperService {
 
   async processDomainsBatch(domains, sourceUrl, sourceDate, results) {
     const limitedDomains = domains.slice(0, 5);
-    console.log(`🔬 Processing ${limitedDomains.length} domains (limited for testing)`);
+    console.log(`🔬 Processing ${limitedDomains.length} domains (testing mode)`);
     
-    for (const row of limitedDomains) {
-      await this.processDomainRow(row, sourceUrl, sourceDate, results);
+    // Process in parallel batches of 4, but only if different RDAP servers
+    for (let i = 0; i < limitedDomains.length; i += 4) {
+      const batch = limitedDomains.slice(i, i + 4);
+      await this.processParallelBatch(batch, sourceUrl, sourceDate, results);
     }
+  }
+
+  async processParallelBatch(batch, sourceUrl, sourceDate, results) {
+    // Group domains by RDAP server
+    const serverGroups = new Map();
+    
+    for (const row of batch) {
+      const domainName = row.domainName || row.domain || row.Domain || row.domain_name;
+      if (!domainName) continue;
+      
+      const tld = this.extractTld(domainName)?.replace('.', '');
+      const rdapServer = domainEnrichmentService.getRdapServer(domainName);
+      
+      if (!serverGroups.has(rdapServer)) {
+        serverGroups.set(rdapServer, []);
+      }
+      serverGroups.get(rdapServer).push(row);
+    }
+    
+    // Process each server group sequentially, but different servers in parallel
+    const serverPromises = [];
+    
+    for (const [server, rows] of serverGroups) {
+      // Process domains from same server sequentially
+      const serverPromise = (async () => {
+        for (const row of rows) {
+          await this.processDomainRow(row, sourceUrl, sourceDate, results);
+        }
+      })();
+      
+      serverPromises.push(serverPromise);
+    }
+    
+    // Wait for all different servers to complete
+    await Promise.all(serverPromises);
   }
 
   async processDomainRow(row, sourceUrl, sourceDate, results) {
@@ -195,7 +232,7 @@ class DomainScraperService {
       console.log(`🔍 Enriching ${domainName}...`);
       console.log(`📄 CSV row data:`, JSON.stringify(row, null, 2));
       
-      // Extract CSV data first
+      // Extract CSV data as fallback
       const csvRegistrant = {
         name: row.registrant_name || row.registrantName || row.contactName,
         email: row.registrant_email || row.registrantEmail || row.contactEmail,
@@ -204,38 +241,13 @@ class DomainScraperService {
         country: row.registrant_country || row.registrantCountry || row.country
       };
       
-      // Try WhoisXML first, then WhoisFreaks
+      // Use RDAP for enrichment
       let enrichedData = null;
-      const Settings = require('../models/Settings');
-      const settings = await Settings.findOne();
-      const whoisXmlKey = settings?.apiKeys?.whoisxml;
-      const whoisFreaksKey = settings?.apiKeys?.whoisfreaks;
-      
-      // Try WhoisXML first
-      if (whoisXmlKey) {
-        console.log(`🔄 Trying WhoisXML for ${domainName}...`);
-        enrichedData = await domainEnrichmentService.enrichWithWhoisXML(domainName, whoisXmlKey);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-      
-      // If WhoisXML fails or returns incomplete data, try WhoisFreaks
-      const hasData = enrichedData && (
-        enrichedData.registrant?.name || 
-        enrichedData.registrant?.email || 
-        enrichedData.registrant?.organization
-      );
-      
-      if (!hasData && whoisFreaksKey) {
-        console.log(`🔄 Trying WhoisFreaks for ${domainName}...`);
-        enrichedData = await domainEnrichmentService.enrichWithWhoisFreaks(domainName, whoisFreaksKey);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-      
-      if (!whoisXmlKey && !whoisFreaksKey) {
-        console.log('⚠️ No API keys configured, using CSV data only');
-      }
+      console.log(`🔄 Trying RDAP for ${domainName}...`);
+      enrichedData = await domainEnrichmentService.enrichWithRDAP(domainName);
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // Merge CSV data with enriched data (enriched data takes priority)
+      // Merge CSV data with RDAP data (RDAP takes priority)
       const finalRegistrant = {
         name: enrichedData?.registrant?.name || csvRegistrant.name || null,
         email: enrichedData?.registrant?.email || csvRegistrant.email || null,
@@ -253,7 +265,7 @@ class DomainScraperService {
         status: enrichedData?.status || row.status || row.domainStatus,
         sourceUrl,
         sourceDate,
-        enrichmentSource: enrichedData?.source || 'CSV'
+        enrichmentSource: enrichedData ? 'RDAP' : 'CSV'
       };
 
       console.log(`💾 Saving domain data:`, JSON.stringify(domainData, null, 2));
