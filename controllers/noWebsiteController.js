@@ -2,6 +2,7 @@ const NoWebsiteSearch = require('../models/NoWebsiteSearch');
 const NoWebsiteBusiness = require('../models/NoWebsiteBusiness');
 const { findBusinessesWithoutWebsite, findBusinessesFromFoursquare } = require('../services/noWebsiteGoogleService');
 const facebookService = require('../services/facebookService');
+const hunterService = require('../services/hunterService');
 
 exports.scanForBusinesses = async (req, res) => {
   let search;
@@ -110,6 +111,7 @@ exports.scanForBusinesses = async (req, res) => {
     const enrichedBusinesses = [];
     let facebookSuccess = 0;
     let facebookFailed = 0;
+    let hunterSuccess = 0;
 
     for (let i = 0; i < businesses.length; i++) {
       // Check cancellation every 5 businesses
@@ -138,13 +140,28 @@ exports.scanForBusinesses = async (req, res) => {
           ? business.socialPage 
           : (facebookData?.pageUrl || business.socialPage || null);
 
+        // Try to get email from Hunter if Facebook page exists
+        let email = facebookData?.email || null;
+        if (!email && finalFacebookPage) {
+          const fbDomain = finalFacebookPage.match(/facebook\.com\/([^/?]+)/)?.[1];
+          if (fbDomain) {
+            // Try to find email using business name as domain hint
+            const potentialDomain = `${business.name.toLowerCase().replace(/\s+/g, '')}.com`;
+            const emails = await hunterService.findEmailsByDomain(potentialDomain);
+            if (emails.length > 0) {
+              email = emails[0];
+              hunterSuccess++;
+            }
+          }
+        }
+
         const savedBusiness = await NoWebsiteBusiness.create({
           searchId: search._id,
           userId,
           ownerName: facebookData?.ownerName || null,
           businessName: business.name,
           phone: business.phone,
-          email: facebookData?.email || null,
+          email: email,
           facebookPage: finalFacebookPage,
           address: business.address,
           city: city,
@@ -158,10 +175,10 @@ exports.scanForBusinesses = async (req, res) => {
         enrichedBusinesses.push(savedBusiness);
         if (facebookData) facebookSuccess++;
         
-        console.log(`   [${i + 1}/${businesses.length}] ✓ ${business.name} ${facebookData ? '(Facebook data found)' : ''}`);
+        console.log(`   [${i + 1}/${businesses.length}] ✓ ${business.name} ${facebookData ? '(Facebook data found)' : ''} ${email ? '(Email found)' : ''}`);
       } catch (error) {
         facebookFailed++;
-        console.log(`   [${i + 1}/${businesses.length}] ⚠️  ${business.name} (Facebook enrichment failed)`);
+        console.log(`   [${i + 1}/${businesses.length}] ⚠️  ${business.name} (Enrichment failed)`);
         
         const savedBusiness = await NoWebsiteBusiness.create({
           searchId: search._id,
@@ -181,7 +198,7 @@ exports.scanForBusinesses = async (req, res) => {
       }
     }
     
-    console.log(`\n   ✓ Enrichment complete: ${facebookSuccess} with Facebook data, ${facebookFailed} without\n`);
+    console.log(`\n   ✓ Enrichment complete: ${facebookSuccess} with Facebook data, ${facebookFailed} without, ${hunterSuccess} with Hunter emails\n`);
 
     search.resultsCount = enrichedBusinesses.length;
     search.status = 'completed';
