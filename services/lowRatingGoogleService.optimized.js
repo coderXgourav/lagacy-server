@@ -167,21 +167,20 @@ exports.findBusinessesByRating = async ({ city, state, country, radius, category
     
     console.log(`📊 Found ${allBusinesses.length} unique businesses`);
     
+    // Filter businesses that meet the rating criteria first
+    const lowRatedBusinesses = allBusinesses.filter(b => b.hasRating && b.rating <= maxRating);
     const needsDetails = allBusinesses.filter(b => !b.hasRating);
-    const hasRating = allBusinesses.filter(b => b.hasRating);
     
-    console.log(`✅ ${hasRating.length} already have ratings`);
+    console.log(`✅ ${lowRatedBusinesses.length} already have low ratings`);
     console.log(`🔎 ${needsDetails.length} need Details API calls`);
     
-    const detailsLimit = Math.min(needsDetails.length, limit * 3);
-    const detailedBusinesses = [];
-    
-    for (let i = 0; i < detailsLimit; i++) {
-      const business = needsDetails[i];
-      const details = await getPlaceDetails(business.place_id, apiKey);
-      
-      if (details.rating && details.rating <= maxRating) {
-        detailedBusinesses.push({
+    // Get details for all low-rated businesses to fetch phone numbers
+    const detailedLowRated = [];
+    for (let i = 0; i < Math.min(lowRatedBusinesses.length, limit); i++) {
+      const business = lowRatedBusinesses[i];
+      try {
+        const details = await getPlaceDetails(business.place_id, apiKey);
+        detailedLowRated.push({
           name: details.name,
           rating: details.rating,
           totalReviews: details.user_ratings_total || 0,
@@ -191,19 +190,38 @@ exports.findBusinessesByRating = async ({ city, state, country, radius, category
           category: details.types?.[0] || category,
           location: details.geometry?.location
         });
+      } catch (error) {
+        console.error(`Failed to get details for ${business.name}:`, error.message);
       }
     }
     
-    const lowRatedWithRating = hasRating.filter(b => b.rating <= maxRating).map(b => ({
-      name: b.name,
-      rating: b.rating,
-      totalReviews: b.totalReviews,
-      address: b.address,
-      location: b.location,
-      category: category
-    }));
+    // Also check businesses without ratings
+    const detailsLimit = Math.min(needsDetails.length, limit * 2);
+    const additionalBusinesses = [];
     
-    const finalResults = [...lowRatedWithRating, ...detailedBusinesses].slice(0, limit);
+    for (let i = 0; i < detailsLimit && detailedLowRated.length + additionalBusinesses.length < limit; i++) {
+      const business = needsDetails[i];
+      try {
+        const details = await getPlaceDetails(business.place_id, apiKey);
+        
+        if (details.rating && details.rating <= maxRating) {
+          additionalBusinesses.push({
+            name: details.name,
+            rating: details.rating,
+            totalReviews: details.user_ratings_total || 0,
+            phone: details.formatted_phone_number,
+            address: details.formatted_address,
+            website: details.website,
+            category: details.types?.[0] || category,
+            location: details.geometry?.location
+          });
+        }
+      } catch (error) {
+        console.error(`Failed to get details for ${business.name}:`, error.message);
+      }
+    }
+    
+    const finalResults = [...detailedLowRated, ...additionalBusinesses].slice(0, limit);
     
     console.log(`\n✅ Found ${finalResults.length} businesses with ratings ≤ ${maxRating}\n`);
     
