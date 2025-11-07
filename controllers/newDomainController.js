@@ -2,6 +2,7 @@ const NewDomainSearch = require('../models/NewDomainSearch');
 const NewDomain = require('../models/NewDomain');
 const whoisService = require('../services/whoisService');
 const ctService = require('../services/certificateTransparencyService');
+const hunterService = require('../services/hunterService');
 
 exports.scanNewDomains = async (req, res) => {
   let search;
@@ -60,6 +61,10 @@ exports.scanNewDomains = async (req, res) => {
           
           // Accept all domains from CT search since we're already filtering by TLD
 
+          // Try to find email using Hunter.io
+          const emails = await hunterService.findEmailsByDomain(domain.name);
+          const registrantEmail = emails.length > 0 ? emails[0] : null;
+
           const savedDomain = await NewDomain.create({
             searchId: search._id,
             userId,
@@ -67,13 +72,15 @@ exports.scanNewDomains = async (req, res) => {
             registrationDate: domain.registrationDate,
             tld: domainTld,
             source: 'certificate_transparency',
-            registrant: {},
+            registrant: {
+              email: registrantEmail
+            },
             nameservers: [],
             status: 'active'
           });
 
           allDomains.push(savedDomain);
-          console.log(`Saved domain: ${domain.name}`);
+          console.log(`Saved domain: ${domain.name}${registrantEmail ? ' with email from Hunter' : ''}`);
           if (allDomains.length >= leads) break;
         } catch (error) {
           console.error(`Error saving CT domain ${domain.name}:`, error.message);
@@ -106,6 +113,13 @@ exports.scanNewDomains = async (req, res) => {
 
               const whoisData = await whoisService.getWhoisData(domain.name);
               
+              // Try to get email from Hunter if not in WHOIS
+              let registrantEmail = whoisData?.registrant?.email || null;
+              if (!registrantEmail) {
+                const emails = await hunterService.findEmailsByDomain(domain.name);
+                registrantEmail = emails.length > 0 ? emails[0] : null;
+              }
+
               const savedDomain = await NewDomain.create({
                 searchId: search._id,
                 userId,
@@ -113,7 +127,10 @@ exports.scanNewDomains = async (req, res) => {
                 registrationDate: domain.registrationDate || new Date(),
                 tld,
                 source: 'whois',
-                registrant: whoisData?.registrant || {},
+                registrant: {
+                  ...whoisData?.registrant,
+                  email: registrantEmail
+                },
                 nameservers: whoisData?.nameservers || [],
                 status: whoisData?.status || 'active'
               });

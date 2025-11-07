@@ -2,6 +2,7 @@ const LowRatingSearch = require('../models/LowRatingSearch');
 const LowRatingBusiness = require('../models/LowRatingBusiness');
 const googlePlacesService = require('../services/lowRatingGoogleService.optimized');
 const yelpService = require('../services/yelpLowRatingService');
+const hunterService = require('../services/hunterService');
 const logger = require('../src/utils/logger');
 
 exports.scanForLowRatingBusinesses = async (req, res) => {
@@ -90,6 +91,14 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
     
     logger.success(`Combined results: ${businesses.length} unique businesses (Google: ${googleBusinesses.length}, Yelp: ${yelpBusinesses.length})`);
 
+    // Enrich with Hunter.io emails
+    logger.info('Enriching businesses with Hunter.io emails...');
+    const enrichedBusinesses = await hunterService.enrichBusinessesWithEmails(businesses, {
+      batchSize: 5,
+      delayBetweenBatches: 1000,
+      skipIfHasEmail: true
+    });
+
     // Check if cancelled before saving
     freshSearch = await LowRatingSearch.findById(search._id);
     if (freshSearch.cancelRequested) {
@@ -102,7 +111,7 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
 
     const savedBusinesses = [];
 
-    for (let i = 0; i < businesses.length; i++) {
+    for (let i = 0; i < enrichedBusinesses.length; i++) {
       // Check cancellation every 10 businesses
       if (i % 10 === 0) {
         freshSearch = await LowRatingSearch.findById(search._id);
@@ -110,12 +119,12 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
           search.status = 'cancelled';
           search.completedAt = new Date();
           await search.save();
-          console.log(`🚫 Search cancelled during save at ${i}/${businesses.length}`);
+          console.log(`🚫 Search cancelled during save at ${i}/${enrichedBusinesses.length}`);
           return;
         }
       }
       
-      const business = businesses[i];
+      const business = enrichedBusinesses[i];
       try {
         const savedBusiness = await LowRatingBusiness.create({
           searchId: search._id,
