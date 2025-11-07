@@ -34,14 +34,58 @@ exports.scanForBusinesses = async (req, res) => {
     const Settings = require('../models/Settings');
     const axios = require('axios');
     const settings = await Settings.findOne();
-    let googleApiKey = settings?.apiKeys?.googlePlaces || process.env.googlePlaces;
+    let googleApiKey = settings?.apiKeys?.googlePlaces || process.env.GOOGLE_PLACES_API_KEY;
     if (googleApiKey) googleApiKey = googleApiKey.replace(/["']/g, '').trim();
     
+    console.log('🔑 Google API Key:', googleApiKey ? `${googleApiKey.substring(0, 10)}...` : '(not found)');
+    
+    if (!googleApiKey || googleApiKey === 'your_google_places_api_key_here') {
+      throw new Error('Google Places API key not configured. Please add it in Settings or .env file.');
+    }
+    
     const locationStr = [city, state, country].filter(Boolean).join(', ');
+    console.log('📍 Geocoding location:', locationStr);
+    
     const geocodeResponse = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
       params: { address: locationStr, key: googleApiKey }
     });
-    const { lat, lng } = geocodeResponse.data.results[0].geometry.location;
+    
+    console.log('🌍 Geocoding API status:', geocodeResponse.data.status);
+    
+    let lat, lng;
+    
+    if (geocodeResponse.data.status === 'REQUEST_DENIED') {
+      console.log('⚠️  Google API billing not enabled, using free geocoding service...');
+      
+      // Fallback to free Nominatim geocoding service
+      const nominatimResponse = await axios.get('https://nominatim.openstreetmap.org/search', {
+        params: {
+          q: locationStr,
+          format: 'json',
+          limit: 1
+        },
+        headers: {
+          'User-Agent': 'LegacyLeadFinder/1.0'
+        }
+      });
+      
+      if (!nominatimResponse.data || nominatimResponse.data.length === 0) {
+        throw new Error(`Location not found: "${locationStr}". Please enable Google API billing or verify the location.`);
+      }
+      
+      lat = parseFloat(nominatimResponse.data[0].lat);
+      lng = parseFloat(nominatimResponse.data[0].lon);
+      console.log('✅ Coordinates found (via free service):', { lat, lng });
+    } else {
+      if (!geocodeResponse.data.results || geocodeResponse.data.results.length === 0) {
+        throw new Error(`Location not found: "${locationStr}". Status: ${geocodeResponse.data.status}`);
+      }
+      
+      const location = geocodeResponse.data.results[0].geometry.location;
+      lat = location.lat;
+      lng = location.lng;
+      console.log('✅ Coordinates found:', { lat, lng });
+    }
     
     // Check if cancelled
     let freshSearch = await NoWebsiteSearch.findById(search._id);
