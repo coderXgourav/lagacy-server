@@ -122,7 +122,7 @@ async function searchGoogleGridNoWebsite(lat, lng, businessCategory, radius, api
   return businesses;
 }
 
-async function findBusinessesWithoutWebsite({ city, state, country, radius, category, limit }) {
+async function findBusinessesWithoutWebsite({ lat, lng, city, state, country, radius, category, limit }) {
   try {
     console.log(`\n${'='.repeat(80)}`);
     console.log(`[NO-WEBSITE SCAN] Starting scan for businesses WITHOUT websites`);
@@ -141,22 +141,31 @@ async function findBusinessesWithoutWebsite({ city, state, country, radius, cate
       throw new Error('Google Places API key not configured');
     }
     
-    // Geocode location
-    console.log(`🗺️  Step 1: Geocoding location...`);
-    const locationStr = [city, state, country].filter(Boolean).join(', ');
-    const geocodeResponse = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
-      params: { address: locationStr, key: apiKey }
-    });
+    // Use provided coordinates or geocode location
+    let searchLat = lat;
+    let searchLng = lng;
     
-    if (geocodeResponse.data.status !== 'OK') {
-      throw new Error(`Geocoding failed: ${geocodeResponse.data.status}`);
+    if (!searchLat || !searchLng) {
+      console.log(`🗺️  Step 1: Geocoding location...`);
+      const locationStr = [city, state, country].filter(Boolean).join(', ');
+      const geocodeResponse = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
+        params: { address: locationStr, key: apiKey }
+      });
+      
+      if (geocodeResponse.data.status !== 'OK') {
+        throw new Error(`Geocoding failed: ${geocodeResponse.data.status}`);
+      }
+      
+      const location = geocodeResponse.data.results[0].geometry.location;
+      searchLat = location.lat;
+      searchLng = location.lng;
+      console.log(`   ✓ Geocoded to: ${searchLat.toFixed(4)}, ${searchLng.toFixed(4)}\n`);
+    } else {
+      console.log(`🗺️  Step 1: Using provided coordinates: ${searchLat.toFixed(4)}, ${searchLng.toFixed(4)}\n`);
     }
     
-    const { lat, lng } = geocodeResponse.data.results[0].geometry.location;
-    console.log(`   ✓ Coordinates: ${lat.toFixed(4)}, ${lng.toFixed(4)}\n`);
-    
     console.log(`🔍 Step 2: Generating dynamic grid points...`);
-    const gridPoints = generateGridPoints(lat, lng, radius);
+    const gridPoints = generateGridPoints(searchLat, searchLng, radius);
     console.log(`   ✓ Generated ${gridPoints.length} grid points for comprehensive coverage\n`);
     
     const seenPlaceIds = new Set();

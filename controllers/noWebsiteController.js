@@ -7,17 +7,37 @@ const hunterService = require('../services/hunterService');
 exports.scanForBusinesses = async (req, res) => {
   let search;
   try {
-    const { city, state, country, radius, niche, leads } = req.body;
+    const { 
+      city, 
+      state, 
+      country, 
+      niche, 
+      lat,              // NEW: Optional coordinates from map
+      lng,              // NEW: Optional coordinates from map
+      useHunter = true  // NEW: Enable/disable Hunter.io (default true)
+    } = req.body;
     const userId = req.user._id;
+
+    // Validate: Need either city/country (preferred) OR coordinates
+    if (!city && !country && (!lat || !lng)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Location required: provide city/country or coordinates (lat/lng)' 
+      });
+    }
+
+    // Fixed radius at 5000 meters (5km)
+    const searchRadius = 5000;
 
     search = await NoWebsiteSearch.create({
       userId,
-      city,
+      city: city || 'Map Location',
       state,
-      country,
-      radius,
+      country: country || 'N/A',
+      coordinates: lat && lng ? { lat: parseFloat(lat), lng: parseFloat(lng) } : null,
+      radius: searchRadius,
       niche,
-      leads,
+      useHunter,
       status: 'processing',
       executedAt: new Date()
     });
@@ -29,19 +49,51 @@ exports.scanForBusinesses = async (req, res) => {
     });
 
     console.log(`🚀 Search ${search._id} started, processing in background...`);
+    console.log(`📧 Hunter.io: ${useHunter ? 'Enabled' : 'Disabled'}`);
 
-    // Get coordinates for Foursquare
-    const Settings = require('../models/Settings');
-    const axios = require('axios');
-    const settings = await Settings.findOne();
-    let googleApiKey = settings?.apiKeys?.googlePlaces || process.env.googlePlaces;
-    if (googleApiKey) googleApiKey = googleApiKey.replace(/["']/g, '').trim();
-    
-    const locationStr = [city, state, country].filter(Boolean).join(', ');
-    const geocodeResponse = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
-      params: { address: locationStr, key: googleApiKey }
-    });
-    const { lat, lng } = geocodeResponse.data.results[0].geometry.location;
+    // Get search coordinates (use provided coordinates or geocode location)
+    let searchLocation;
+    try {
+      // Always geocode the typed location if city and country are provided
+      // This ensures typed locations take priority over any stale GPS coordinates
+      if (city && country) {
+        console.log(`🔍 Geocoding typed location: ${city}, ${state || ''}, ${country}`);
+        const Settings = require('../models/Settings');
+        const axios = require('axios');
+        const settings = await Settings.findOne();
+        let googleApiKey = settings?.apiKeys?.googlePlaces || process.env.GOOGLE_PLACES_API_KEY;
+        if (googleApiKey) googleApiKey = googleApiKey.replace(/["']/g, '').trim();
+        
+        const locationStr = [city, state, country].filter(Boolean).join(', ');
+        const geocodeResponse = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
+          params: { address: locationStr, key: googleApiKey }
+        });
+        
+        if (!geocodeResponse.data.results || geocodeResponse.data.results.length === 0) {
+          throw new Error('Location not found');
+        }
+        
+        const location = geocodeResponse.data.results[0]?.geometry?.location;
+        if (!location) {
+          throw new Error('Invalid geocoding response');
+        }
+        
+        searchLocation = { lat: location.lat, lng: location.lng };
+        console.log(`✅ Geocoded to: ${searchLocation.lat}, ${searchLocation.lng}`);
+      } else if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
+        // Fallback: Use coordinates from map only if no city/country provided
+        searchLocation = { lat: parseFloat(lat), lng: parseFloat(lng) };
+        console.log(`📍 Using map coordinates: ${searchLocation.lat}, ${searchLocation.lng}`);
+      } else {
+        throw new Error('No location information provided');
+      }
+    } catch (geocodeError) {
+      console.error('Geocoding failed:', geocodeError.message);
+      search.status = 'failed';
+      search.completedAt = new Date();
+      await search.save();
+      return;
+    }
     
     // Check if cancelled
     let freshSearch = await NoWebsiteSearch.findById(search._id);
@@ -54,16 +106,19 @@ exports.scanForBusinesses = async (req, res) => {
     }
 
     // Search both Google Places and Foursquare
+    // Note: Return ALL results, no lead cap limit
     const [googleBusinesses, foursquareBusinesses] = await Promise.all([
       findBusinessesWithoutWebsite({
+        lat: searchLocation.lat,
+        lng: searchLocation.lng,
         city,
         state,
         country,
-        radius,
+        radius: searchRadius,
         category: niche,
-        limit: leads
+        limit: 999 // Get as many as possible
       }),
-      findBusinessesFromFoursquare(lat, lng, niche, radius)
+      findBusinessesFromFoursquare(searchLocation.lat, searchLocation.lng, niche, searchRadius)
     ]);
 
     // Check if cancelled after search
@@ -140,9 +195,9 @@ exports.scanForBusinesses = async (req, res) => {
           ? business.socialPage 
           : (facebookData?.pageUrl || business.socialPage || null);
 
-        // Try to get email from Hunter if Facebook page exists
+        // Try to get email from Hunter if Facebook page exists (only if useHunter is enabled)
         let email = facebookData?.email || null;
-        if (!email && finalFacebookPage) {
+        if (useHunter && !email && finalFacebookPage) {
           const fbDomain = finalFacebookPage.match(/facebook\.com\/([^/?]+)/)?.[1];
           if (fbDomain) {
             // Try to find email using business name as domain hint
