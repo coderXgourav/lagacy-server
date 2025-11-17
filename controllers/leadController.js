@@ -4,7 +4,7 @@ const Search = require('../models/Search');
 // Get all leads
 exports.getAllLeads = async (req, res) => {
   try {
-    const { page = 1, limit = 50, status, source, searchId } = req.query;
+    const { page = 1, limit = 999, status, source, searchId } = req.query;
     
     const query = {};
     if (status) query.status = status;
