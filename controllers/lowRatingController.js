@@ -8,11 +8,24 @@ const logger = require('../src/utils/logger');
 exports.scanForLowRatingBusinesses = async (req, res) => {
   let search;
   try {
-    const { city, state, country, radius, niche, maxRating, leads } = req.body;
+    const { 
+      city, 
+      state, 
+      country, 
+      niche, 
+      maxRating, 
+      lat,              // NEW: Optional coordinates from map
+      lng,              // NEW: Optional coordinates from map
+      useHunter = true  // NEW: Enable/disable Hunter.io (default true)
+    } = req.body;
     const userId = req.user._id;
 
-    if (!city || !country) {
-      return res.status(400).json({ success: false, message: 'City and country are required' });
+    // Validate: Need either city/country (preferred) OR coordinates
+    if (!city && !country && (!lat || !lng)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Location required: provide city/country or coordinates (lat/lng)' 
+      });
     }
 
     const ratingThreshold = maxRating || 3.0;
@@ -20,15 +33,19 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
       return res.status(400).json({ success: false, message: 'maxRating must be between 1.0 and 5.0' });
     }
 
+    // Fixed radius at 5000 meters (5km)
+    const searchRadius = 5000;
+
     search = await LowRatingSearch.create({
       userId,
-      city,
+      city: city || 'Map Location',
       state,
-      country,
-      radius: radius || 5000,
+      country: country || 'N/A',
+      coordinates: lat && lng ? { lat: parseFloat(lat), lng: parseFloat(lng) } : null,
+      radius: searchRadius,
       niche,
       maxRating: ratingThreshold,
-      leads: leads || 200,
+      useHunter,
       status: 'processing',
       executedAt: new Date()
     });
@@ -40,7 +57,53 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
     });
 
     console.log(`🚀 Search ${search._id} started, processing in background...`);
-    logger.info(`Starting low rating scan for ${city}, maxRating: ${ratingThreshold}`);
+    logger.info(`Starting low rating scan, maxRating: ${ratingThreshold}, useHunter: ${useHunter}`);
+
+    // Get search coordinates (use provided coordinates or geocode location)
+    let searchLocation;
+    try {
+      // Always geocode the typed location if city and country are provided
+      // This ensures typed locations take priority over any stale GPS coordinates
+      if (city && country) {
+        console.log(`🔍 Geocoding typed location: ${city}, ${state || ''}, ${country}`);
+        const axios = require('axios');
+        const Settings = require('../models/Settings');
+        const settings = await Settings.findOne();
+        let apiKey = settings?.apiKeys?.googlePlaces || process.env.GOOGLE_PLACES_API_KEY;
+        if (apiKey) apiKey = apiKey.replace(/["']/g, '').trim();
+        
+        const addressParts = [city, state, country].filter(Boolean);
+        const address = addressParts.join(', ');
+        
+        const geocodeResponse = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
+          params: { address, key: apiKey }
+        });
+        
+        if (!geocodeResponse.data.results || geocodeResponse.data.results.length === 0) {
+          throw new Error('Location not found');
+        }
+        
+        const location = geocodeResponse.data.results[0]?.geometry?.location;
+        if (!location) {
+          throw new Error('Invalid geocoding response');
+        }
+        
+        searchLocation = { lat: location.lat, lng: location.lng };
+        console.log(`✅ Geocoded to: ${searchLocation.lat}, ${searchLocation.lng}`);
+      } else if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
+        // Fallback: Use coordinates from map only if no city/country provided
+        searchLocation = { lat: parseFloat(lat), lng: parseFloat(lng) };
+        console.log(`📍 Using map coordinates: ${searchLocation.lat}, ${searchLocation.lng}`);
+      } else {
+        throw new Error('No location information provided');
+      }
+    } catch (geocodeError) {
+      logger.error('Geocoding failed', geocodeError.message);
+      search.status = 'failed';
+      search.completedAt = new Date();
+      await search.save();
+      return;
+    }
 
     // Check if cancelled before expensive operation
     let freshSearch = await LowRatingSearch.findById(search._id);
@@ -53,24 +116,29 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
     }
 
     // Search both Google Places and Yelp in parallel
+    // Note: Return ALL results, no lead cap limit
     const [googleBusinesses, yelpBusinesses] = await Promise.all([
       googlePlacesService.findBusinessesByRating({
+        lat: searchLocation.lat,
+        lng: searchLocation.lng,
         city,
         state,
         country,
-        radius: radius || 5000,
+        radius: searchRadius,
         category: niche,
         maxRating: ratingThreshold,
-        limit: leads || 200
+        limit: 999 // Get as many as possible from Google
       }),
       yelpService.findLowRatedBusinesses({
+        lat: searchLocation.lat,
+        lng: searchLocation.lng,
         city,
         state,
         country,
-        radius: radius || 5000,
+        radius: searchRadius,
         category: niche,
         maxRating: ratingThreshold,
-        limit: 50 // Yelp limit
+        limit: 50 // Yelp API limit
       })
     ]);
 
@@ -87,17 +155,23 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
       }
     }
     
-    const businesses = uniqueBusinesses.slice(0, leads || 200);
+    // Return ALL results - no lead cap limit
+    const businesses = uniqueBusinesses;
     
     logger.success(`Combined results: ${businesses.length} unique businesses (Google: ${googleBusinesses.length}, Yelp: ${yelpBusinesses.length})`);
 
-    // Enrich with Hunter.io emails
-    logger.info('Enriching businesses with Hunter.io emails...');
-    const enrichedBusinesses = await hunterService.enrichBusinessesWithEmails(businesses, {
-      batchSize: 5,
-      delayBetweenBatches: 1000,
-      skipIfHasEmail: true
-    });
+    // Enrich with Hunter.io emails (only if enabled)
+    let enrichedBusinesses = businesses;
+    if (useHunter) {
+      logger.info('Enriching businesses with Hunter.io emails...');
+      enrichedBusinesses = await hunterService.enrichBusinessesWithEmails(businesses, {
+        batchSize: 5,
+        delayBetweenBatches: 1000,
+        skipIfHasEmail: true
+      });
+    } else {
+      logger.info('Hunter.io enrichment disabled by user');
+    }
 
     // Check if cancelled before saving
     freshSearch = await LowRatingSearch.findById(search._id);

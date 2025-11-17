@@ -2,7 +2,7 @@ const axios = require('axios');
 const logger = require('../src/utils/logger');
 const Settings = require('../models/Settings');
 
-async function findLowRatedBusinesses({ city, state, country, radius, category, maxRating, limit }) {
+async function findLowRatedBusinesses({ lat, lng, city, state, country, radius, category, maxRating, limit }) {
   try {
     logger.info('Searching Yelp for low-rated businesses...');
     
@@ -15,23 +15,34 @@ async function findLowRatedBusinesses({ city, state, country, radius, category, 
       return [];
     }
 
-    // Geocode location first
-    const location = `${city}${state ? ', ' + state : ''}, ${country}`;
+    // Use coordinates if provided, otherwise use location string
+    let searchParams;
+    if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
+      searchParams = {
+        latitude: parseFloat(lat),
+        longitude: parseFloat(lng),
+        radius: Math.min(radius || 5000, 40000),
+        limit: Math.min(limit || 50, 50),
+        sort_by: 'rating'
+      };
+      logger.info(`Searching Yelp at coordinates: ${lat}, ${lng}`);
+    } else {
+      const location = `${city}${state ? ', ' + state : ''}, ${country}`;
+      searchParams = {
+        location: location,
+        radius: Math.min(radius || 5000, 40000),
+        limit: Math.min(limit || 50, 50),
+        sort_by: 'rating'
+      };
+      logger.info(`Searching Yelp at location: ${location}`);
+    }
     
     const businesses = [];
-    const searchLimit = Math.min(limit || 50, 50); // Yelp max is 50 per request
     
-    const params = {
-      location: location,
-      radius: Math.min(radius || 5000, 40000), // Yelp max is 40km
-      limit: searchLimit,
-      sort_by: 'rating' // Sort by rating to get lower rated first
-    };
-    
-    if (category) params.term = category;
+    if (category) searchParams.term = category;
 
     const response = await axios.get('https://api.yelp.com/v3/businesses/search', {
-      params,
+      params: searchParams,
       headers: {
         'Authorization': `Bearer ${apiKey}`
       }
