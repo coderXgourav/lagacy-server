@@ -171,104 +171,65 @@ class DomainScraperService {
     const limitedDomains = domains.slice(0, 5);
     console.log(`🔬 Processing ${limitedDomains.length} domains (testing mode)`);
     
-    // Process in parallel batches of 4, but only if different RDAP servers
-    for (let i = 0; i < limitedDomains.length; i += 4) {
-      const batch = limitedDomains.slice(i, i + 4);
-      await this.processParallelBatch(batch, sourceUrl, sourceDate, results);
-    }
-  }
+    // Extract domain names and create domain objects
+    const domainObjects = limitedDomains.map(row => ({
+      name: row.domainName || row.domain || row.Domain || row.domain_name,
+      row: row
+    })).filter(d => d.name);
 
-  async processParallelBatch(batch, sourceUrl, sourceDate, results) {
-    // Group domains by RDAP server
-    const serverGroups = new Map();
+    console.log(`\n🚀 Using parallel RDAP enrichment grouped by TLD...`);
     
-    for (const row of batch) {
-      const domainName = row.domainName || row.domain || row.Domain || row.domain_name;
-      if (!domainName) continue;
-      
-      const tld = this.extractTld(domainName)?.replace('.', '');
-      const rdapServer = domainEnrichmentService.getRdapServer(domainName);
-      
-      if (!serverGroups.has(rdapServer)) {
-        serverGroups.set(rdapServer, []);
+    // Use the new parallel enrichment method
+    const enrichmentResults = await domainEnrichmentService.enrichDomainsInParallel(
+      domainObjects.map(d => d.name),
+      {
+        concurrentPerTLD: 3,  // 3 concurrent requests per RDAP server
+        delayBetweenBatches: 1000  // 1 second delay between batches
       }
-      serverGroups.get(rdapServer).push(row);
+    );
+
+    // Save enriched domains to database
+    console.log(`\n💾 Saving ${enrichmentResults.size} enriched domains to database...`);
+    
+    for (const [domainName, enrichmentResult] of enrichmentResults) {
+      await this.saveDomain(domainName, enrichmentResult, sourceUrl, sourceDate, results);
     }
-    
-    // Process each server group sequentially, but different servers in parallel
-    const serverPromises = [];
-    
-    for (const [server, rows] of serverGroups) {
-      // Process domains from same server sequentially
-      const serverPromise = (async () => {
-        for (const row of rows) {
-          await this.processDomainRow(row, sourceUrl, sourceDate, results);
-        }
-      })();
-      
-      serverPromises.push(serverPromise);
-    }
-    
-    // Wait for all different servers to complete
-    await Promise.all(serverPromises);
   }
 
-  async processDomainRow(row, sourceUrl, sourceDate, results) {
+  async saveDomain(domainName, enrichmentResult, sourceUrl, sourceDate, results) {
     results.totalProcessed++;
-
-    const domainName = row.domainName || row.domain || row.Domain || row.domain_name;
-    
-    if (!domainName) {
-      return;
-    }
 
     try {
       const existingDomain = await ScrapedDomain.findOne({ domainName });
       if (existingDomain) {
         results.duplicates++;
+        console.log(`⏭️  Skipped duplicate: ${domainName}`);
         return;
       }
 
-      console.log(`🔍 Enriching ${domainName}...`);
-      console.log(`📄 CSV row data:`, JSON.stringify(row, null, 2));
-      
-      // Extract CSV data as fallback
-      const csvRegistrant = {
-        name: row.registrant_name || row.registrantName || row.contactName,
-        email: row.registrant_email || row.registrantEmail || row.contactEmail,
-        phone: row.registrant_phone || row.registrantPhone || row.contactPhone,
-        organization: row.registrant_organization || row.registrantOrganization || row.organization,
-        country: row.registrant_country || row.registrantCountry || row.country
-      };
-      
-      // Use RDAP for enrichment
-      let enrichedData = null;
-      console.log(`🔄 Trying RDAP for ${domainName}...`);
-      enrichedData = await domainEnrichmentService.enrichWithRDAP(domainName);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      const enrichedData = enrichmentResult.data;
 
-      // Merge CSV data with RDAP data (RDAP takes priority)
+      // Use only RDAP data (no CSV fallback in this context)
       const finalRegistrant = {
-        name: enrichedData?.registrant?.name || csvRegistrant.name || null,
-        email: enrichedData?.registrant?.email || csvRegistrant.email || null,
-        phone: enrichedData?.registrant?.phone || csvRegistrant.phone || null,
-        organization: enrichedData?.registrant?.organization || csvRegistrant.organization || null,
-        country: enrichedData?.registrant?.country || csvRegistrant.country || null
+        name: enrichedData?.registrant?.name || null,
+        email: enrichedData?.registrant?.email || null,
+        phone: enrichedData?.registrant?.phone || null,
+        organization: enrichedData?.registrant?.organization || null,
+        country: enrichedData?.registrant?.country || null
       };
 
       const domainData = {
         domainName,
         tld: this.extractTld(domainName),
-        registrationDate: enrichedData?.registrationDate || this.parseDate(row.create_date || row.createdDate || row.registrationDate),
+        registrationDate: enrichedData?.registrationDate || new Date(),
         registrant: finalRegistrant,
-        nameservers: enrichedData?.nameservers || this.parseNameservers(row.name_servers || row.nameServers) || [],
-        status: enrichedData?.status || row.status || row.domainStatus,
+        nameservers: enrichedData?.nameservers || [],
+        status: enrichedData?.status || 'active',
         sourceUrl,
         sourceDate,
-        enrichmentSource: enrichedData ? 'RDAP' : 'CSV'
+        enrichmentSource: enrichedData ? 'RDAP' : 'None'
       };
 
-      console.log(`💾 Saving domain data:`, JSON.stringify(domainData, null, 2));
       await ScrapedDomain.create(domainData);
       results.newDomains++;
       
@@ -278,9 +239,10 @@ class DomainScraperService {
     } catch (error) {
       if (error.code === 11000) {
         results.duplicates++;
+        console.log(`⏭️  Duplicate: ${domainName}`);
       } else {
-        console.error(`❌ Error processing ${domainName}:`, error.message);
         results.errors++;
+        console.error(`❌ Error saving ${domainName}:`, error.message);
       }
     }
   }

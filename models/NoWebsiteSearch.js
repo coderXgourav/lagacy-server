@@ -10,9 +10,13 @@ const noWebsiteSearchSchema = new mongoose.Schema({
   city: { type: String, required: true },
   state: String,
   country: { type: String, required: true },
+  coordinates: {
+    lat: Number,
+    lng: Number
+  },
   radius: { type: Number, required: true },
   niche: String,
-  leads: { type: Number, default: 50 },
+  useHunter: { type: Boolean, default: true },
   resultsCount: { type: Number, default: 0 },
   status: { 
     type: String, 

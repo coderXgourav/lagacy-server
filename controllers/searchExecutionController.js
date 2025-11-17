@@ -8,13 +8,29 @@ const SearchService = require('../services/searchService');
  */
 exports.executeSearch = async (req, res) => {
   try {
-    const { city, state, country, radius, category } = req.body;
+    const { 
+      city, 
+      state, 
+      country, 
+      radius, 
+      category,
+      lat,              // NEW: Optional coordinates from map
+      lng,              // NEW: Optional coordinates from map
+      useHunter = true  // NEW: Enable/disable Hunter.io (default true)
+    } = req.body;
 
-    // Validate required fields
-    if (!city || !state || !country || !radius || !category) {
+    // Validate: Need either city/state/country (preferred) OR coordinates
+    if (!city && !state && !country && (!lat || !lng)) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: city, state, country, radius, and category are required'
+        message: 'Location required: provide city/state/country or coordinates (lat/lng), along with category'
+      });
+    }
+    
+    if (!category) {
+      return res.status(400).json({
+        success: false,
+        message: 'category is required'
       });
     }
 
@@ -27,16 +43,21 @@ exports.executeSearch = async (req, res) => {
       });
     }
 
+    // Fixed radius at 5000 meters (5km)
+    const searchRadius = 5000;
+
     // Create search record
     const search = await Search.create({
-      query: `${category} in ${city}, ${state}, ${country}`,
+      query: `${category} in ${city || 'Map Location'}, ${state || ''}, ${country || 'N/A'}`,
       searchType: 'location',
       filters: {
-        city,
+        city: city || 'Map Location',
         state,
-        country,
-        radius: parseInt(radius),
-        category
+        country: country || 'N/A',
+        coordinates: lat && lng ? { lat: parseFloat(lat), lng: parseFloat(lng) } : null,
+        radius: searchRadius,
+        category,
+        useHunter
       },
       status: 'processing',
       apiUsed: 'multiple',
@@ -51,7 +72,16 @@ exports.executeSearch = async (req, res) => {
     });
 
     // Execute search asynchronously
-    executeSearchAsync(search._id, settings.apiKeys, { city, state, country, radius, category });
+    executeSearchAsync(search._id, settings.apiKeys, { 
+      city, 
+      state, 
+      country, 
+      lat, 
+      lng, 
+      radius: searchRadius, 
+      category,
+      useHunter 
+    });
 
   } catch (error) {
     console.error('Error starting search:', error);

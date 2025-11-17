@@ -138,13 +138,21 @@ async function searchFoursquare(lat, lng, radius, category, maxRating, limit) {
   }
 }
 
-exports.findBusinessesByRating = async ({ city, state, country, radius, category, maxRating, limit }) => {
+exports.findBusinessesByRating = async ({ lat, lng, city, state, country, radius, category, maxRating, limit }) => {
   try {
     const settings = await Settings.findOne();
     const apiKey = settings?.apiKeys?.googlePlaces || process.env.GOOGLE_PLACES_API_KEY;
     
-    const locationStr = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
-    const centerLocation = await geocodeLocation(locationStr, apiKey);
+    // Use provided coordinates or geocode location
+    let centerLocation;
+    if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
+      centerLocation = { lat: parseFloat(lat), lng: parseFloat(lng) };
+      console.log(`📍 Using provided coordinates: ${centerLocation.lat}, ${centerLocation.lng}`);
+    } else {
+      const locationStr = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
+      centerLocation = await geocodeLocation(locationStr, apiKey);
+      console.log(`🔍 Geocoded location: ${centerLocation.lat}, ${centerLocation.lng}`);
+    }
     
     console.log(`\n🎯 Searching for low-rating businesses in ${city}`);
     console.log(`📍 Center: ${centerLocation.lat}, ${centerLocation.lng}`);

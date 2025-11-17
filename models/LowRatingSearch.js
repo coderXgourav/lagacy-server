@@ -10,10 +10,14 @@ const lowRatingSearchSchema = new mongoose.Schema({
   city: { type: String, required: true },
   state: String,
   country: { type: String, required: true },
+  coordinates: {
+    lat: Number,
+    lng: Number
+  },
   radius: { type: Number, required: true },
   niche: String,
   maxRating: { type: Number, default: 3.0 },
-  leads: { type: Number, default: 200 },
+  useHunter: { type: Boolean, default: false },
   resultsCount: { type: Number, default: 0 },
   status: { 
     type: String, 

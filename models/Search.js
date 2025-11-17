@@ -20,11 +20,16 @@ const searchSchema = new mongoose.Schema({
     city: String,
     state: String,
     country: String,
+    coordinates: {
+      lat: Number,
+      lng: Number
+    },
     radius: Number,
     category: String,
     industry: String,
     location: String,
-    companySize: String
+    companySize: String,
+    useHunter: { type: Boolean, default: true }
   },
   resultsCount: {
     type: Number,
