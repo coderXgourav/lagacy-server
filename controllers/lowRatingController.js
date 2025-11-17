@@ -262,6 +262,7 @@ exports.getRecentSearches = async (req, res) => {
 exports.getSearchResults = async (req, res) => {
   try {
     const { searchId } = req.params;
+    const { page = 1, limit = 999 } = req.query;
     const userId = req.user._id;
 
     const search = await LowRatingSearch.findOne({ _id: searchId, userId });
@@ -269,7 +270,10 @@ exports.getSearchResults = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Search not found' });
     }
 
-    const businesses = await LowRatingBusiness.find({ searchId, userId }).lean();
+    const businesses = await LowRatingBusiness.find({ searchId, userId })
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .lean();
 
     // Format businesses with both field name formats
     const formattedBusinesses = businesses.map(b => ({

@@ -15,7 +15,7 @@ router.post('/', authMiddleware, async (req, res) => {
   let search;
   try {
     const userId = req.user._id;
-    const { city, state, country, radius = 5000, businessCategory, leadCap = 50, domainYear, filterMode = 'before' } = req.body;
+    const { city, state, country, radius = 5000, businessCategory, domainYear, filterMode = 'before' } = req.body;
 
     if (!city || !country) {
       return res.status(400).json({ error: 'City and country are required' });
@@ -28,7 +28,7 @@ router.post('/', authMiddleware, async (req, res) => {
     }
 
     const location = state ? `${city}, ${state}, ${country}` : `${city}, ${country}`;
-    logger.info('Starting scan pipeline', { city, state, country, radius, businessCategory, leadCap, domainDateFilter });
+    logger.info('Starting scan pipeline', { city, state, country, radius, businessCategory, domainDateFilter });
 
     // Create search record first
     search = await Search.create({
@@ -98,11 +98,8 @@ router.post('/', authMiddleware, async (req, res) => {
       return res.json({ message: 'No businesses found after filtering', count: 0, data: [] });
     }
     
-    // Apply lead cap after all filtering
-    if (markedBusinesses.length > leadCap) {
-      markedBusinesses = markedBusinesses.slice(0, leadCap);
-      logger.info(`Applied lead cap: ${leadCap} businesses`);
-    }
+    // Return ALL filtered results - no lead cap
+    logger.info(`Returning all ${markedBusinesses.length} filtered businesses`);
 
     // Check cancellation
     freshSearch = await Search.findById(search._id);
@@ -187,7 +184,7 @@ router.post('/', authMiddleware, async (req, res) => {
 
     // Save legacy search history
     const searchHistory = new SearchHistory({
-      city, state, country, radius, businessCategory, leadCap,
+      city, state, country, radius, businessCategory,
       resultsCount: savedBusinesses.length,
       status: 'completed'
     });
@@ -206,10 +203,10 @@ router.post('/', authMiddleware, async (req, res) => {
     
     // Save failed search history
     try {
-      const { city, state, country, radius, businessCategory, leadCap } = req.body;
+      const { city, state, country, radius, businessCategory } = req.body;
       if (city && country) {
         const searchHistory = new SearchHistory({
-          city, state, country, radius, businessCategory, leadCap,
+          city, state, country, radius, businessCategory,
           resultsCount: 0,
           status: 'failed'
         });

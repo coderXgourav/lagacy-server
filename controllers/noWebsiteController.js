@@ -137,7 +137,7 @@ exports.scanForBusinesses = async (req, res) => {
     let duplicatesRemoved = 0;
     
     for (const business of allBusinesses) {
-      if (uniqueBusinesses.length >= leads) break;
+      // Return ALL results - no lead cap
       
       const phoneKey = business.phone?.replace(/\D/g, '') || business.name;
       if (!seenPhones.has(phoneKey)) {
@@ -310,6 +310,7 @@ exports.getRecentSearches = async (req, res) => {
 exports.getSearchResults = async (req, res) => {
   try {
     const { searchId } = req.params;
+    const { page = 1, limit = 999 } = req.query;
     const userId = req.user._id;
 
     const search = await NoWebsiteSearch.findOne({ _id: searchId, userId });
@@ -323,7 +324,10 @@ exports.getSearchResults = async (req, res) => {
     const businesses = await NoWebsiteBusiness.find({ 
       searchId, 
       userId 
-    }).lean();
+    })
+    .limit(limit * 1)
+    .skip((page - 1) * limit)
+    .lean();
 
     res.json({
       success: true,
