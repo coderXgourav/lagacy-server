@@ -35,6 +35,8 @@ const lowRatingRoutes = require('./routes/lowRatingRoutes');
 const newDomainRoutes = require('./routes/newDomainRoutes');
 const newBusinessRoutes = require('./routes/newBusinessRoutes');
 const domainScraperRoutes = require('./routes/domainScraperRoutes');
+const csvFilterRoutes = require('./routes/csvFilterRoutes');
+const authMiddleware = require('./middleware/auth');
 
 // Routes
 app.get('/', (req, res) => {
@@ -47,18 +49,19 @@ app.get('/api/health', (req, res) => {
 });
 
 // Mount API routes
-app.use('/api/auth', authRoutes);
-app.use('/api/settings', settingsRoutes);
-app.use('/api/searches', searchesRoutes);
-app.use('/api/leads', leadsRoutes);
-app.use('/api/search', searchExecutionRoutes);
-app.use('/api/scan', scanRoute);
-app.use('/api/download', downloadRoute);
-app.use('/api/history', historyRoute);
-app.use('/api/no-website', noWebsiteRoutes);
-app.use('/api/low-rating', lowRatingRoutes);
-app.use('/api/new-domain', newDomainRoutes);
-app.use('/api/new-business', newBusinessRoutes);
-app.use('/api/domain-scraper', domainScraperRoutes);
+app.use('/api/auth', authRoutes); // Public
+app.use('/api/settings', authMiddleware, settingsRoutes);
+app.use('/api/searches', authMiddleware, searchesRoutes);
+app.use('/api/leads', authMiddleware, leadsRoutes);
+app.use('/api/search', authMiddleware, searchExecutionRoutes);
+app.use('/api/scan', authMiddleware, scanRoute);
+app.use('/api/download', authMiddleware, downloadRoute);
+app.use('/api/history', authMiddleware, historyRoute);
+app.use('/api/no-website', authMiddleware, noWebsiteRoutes);
+app.use('/api/low-rating', authMiddleware, lowRatingRoutes);
+app.use('/api/new-domain', authMiddleware, newDomainRoutes);
+app.use('/api/new-business', authMiddleware, newBusinessRoutes);
+app.use('/api/domain-scraper', authMiddleware, domainScraperRoutes);
+app.use('/api/csv-filter', csvFilterRoutes);
 
 module.exports = app;
