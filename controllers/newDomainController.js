@@ -53,12 +53,12 @@ exports.scanNewDomains = async (req, res) => {
       });
 
       console.log(`CT found ${ctDomains.length} domains, processing...`);
-      
+
       for (const domain of ctDomains) {
         try {
           const domainTld = domain.name.split('.').pop();
           console.log(`Processing domain: ${domain.name}, TLD: ${domainTld}, Allowed TLDs: ${tlds}`);
-          
+
           // Accept all domains from CT search since we're already filtering by TLD
 
           // Try to find email using Hunter.io
@@ -94,7 +94,7 @@ exports.scanNewDomains = async (req, res) => {
     if (allDomains.length < leads) {
       console.log(`🔍 Searching WHOIS databases for additional domains... (Current count: ${allDomains.length})`);
       const remainingLeads = leads - allDomains.length;
-      
+
       for (const tld of tlds) {
         try {
           const domains = await whoisService.findNewlyRegisteredDomains({
@@ -112,7 +112,7 @@ exports.scanNewDomains = async (req, res) => {
               if (existingDomain) continue;
 
               const whoisData = await whoisService.getWhoisData(domain.name);
-              
+
               // Try to get email from Hunter if not in WHOIS
               let registrantEmail = whoisData?.registrant?.email || null;
               if (!registrantEmail) {
@@ -155,7 +155,7 @@ exports.scanNewDomains = async (req, res) => {
     await search.save();
 
     console.log(`Final result: ${allDomains.length} domains saved to database`);
-    
+
     res.json({
       success: true,
       message: `Found ${allDomains.length} newly registered domains`,
@@ -179,10 +179,27 @@ exports.scanNewDomains = async (req, res) => {
 exports.getRecentSearches = async (req, res) => {
   try {
     const userId = req.user._id;
+    const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
 
-    const searches = await NewDomainSearch.find({ userId }).sort({ createdAt: -1 }).limit(limit);
-    res.json({ success: true, searches });
+    const total = await NewDomainSearch.countDocuments({ userId });
+
+    const searches = await NewDomainSearch.find({ userId })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    res.json({
+      success: true,
+      searches,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -199,8 +216,8 @@ exports.getSearchResults = async (req, res) => {
     }
 
     const results = await NewDomain.find({ searchId: id, userId });
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: {
         search: {
           id: search._id,
@@ -223,19 +240,19 @@ exports.cancelSearch = async (req, res) => {
     const { id } = req.params;
     const userId = req.user._id;
     const search = await NewDomainSearch.findOne({ _id: id, userId });
-    
+
     if (!search) return res.status(404).json({ success: false, message: 'Search not found' });
     if (search.status === 'completed' || search.status === 'failed') {
       return res.json({ success: false, message: 'Search already completed' });
     }
-    
+
     search.cancelRequested = true;
     if (search.status === 'pending') {
       search.status = 'cancelled';
       search.completedAt = new Date();
     }
     await search.save();
-    
+
     console.log(`🚫 Cancellation requested for search ${search._id}`);
     res.json({ success: true, message: 'Cancellation requested' });
   } catch (error) {

@@ -91,9 +91,27 @@ exports.scanNewBusinesses = async (req, res) => {
 exports.getRecentSearches = async (req, res) => {
   try {
     const userId = req.user._id;
+    const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
-    const searches = await NewBusinessSearch.find({ userId }).sort({ createdAt: -1 }).limit(limit);
-    res.json({ success: true, searches });
+    const skip = (page - 1) * limit;
+
+    const total = await NewBusinessSearch.countDocuments({ userId });
+
+    const searches = await NewBusinessSearch.find({ userId })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    res.json({
+      success: true,
+      searches,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -106,8 +124,8 @@ exports.getSearchResults = async (req, res) => {
     const search = await NewBusinessSearch.findOne({ _id: id, userId });
     if (!search) return res.status(404).json({ success: false, message: 'Search not found' });
     const results = await NewBusiness.find({ searchId: id, userId });
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: {
         search: {
           id: search._id,
@@ -131,19 +149,19 @@ exports.cancelSearch = async (req, res) => {
     const { id } = req.params;
     const userId = req.user._id;
     const search = await NewBusinessSearch.findOne({ _id: id, userId });
-    
+
     if (!search) return res.status(404).json({ success: false, message: 'Search not found' });
     if (search.status === 'completed' || search.status === 'failed') {
       return res.json({ success: false, message: 'Search already completed' });
     }
-    
+
     search.cancelRequested = true;
     if (search.status === 'pending') {
       search.status = 'cancelled';
       search.completedAt = new Date();
     }
     await search.save();
-    
+
     console.log(`🚫 Cancellation requested for search ${search._id}`);
     res.json({ success: true, message: 'Cancellation requested' });
   } catch (error) {

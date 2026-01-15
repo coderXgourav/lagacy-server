@@ -16,12 +16,31 @@ exports.getAllSearches = async (req, res) => {
 };
 
 // Get recent searches (last 10)
+// Get recent searches (with pagination)
 exports.getRecentSearches = async (req, res) => {
   try {
     const userId = req.user._id;
+    const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-    const searches = await Search.find({ userId }).sort({ executedAt: -1 }).limit(limit);
-    res.json({ success: true, searches });
+    const skip = (page - 1) * limit;
+
+    const total = await Search.countDocuments({ userId });
+
+    const searches = await Search.find({ userId })
+      .sort({ executedAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    res.json({
+      success: true,
+      searches,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     console.error('Error fetching recent searches:', error);
     res.status(500).json({ success: false, message: 'Error fetching recent searches', error: error.message });
@@ -33,11 +52,11 @@ exports.getSearchById = async (req, res) => {
   try {
     const userId = req.user._id;
     const search = await Search.findOne({ _id: req.params.id, userId });
-    
+
     if (!search) {
       return res.status(404).json({ success: false, message: 'Search not found' });
     }
-    
+
     res.json({ success: true, data: search });
   } catch (error) {
     console.error('Error fetching search:', error);
@@ -50,7 +69,7 @@ exports.createSearch = async (req, res) => {
   try {
     const userId = req.user._id;
     const { query, searchType, filters, apiUsed } = req.body;
-    
+
     const search = await Search.create({
       userId,
       query,
@@ -60,7 +79,7 @@ exports.createSearch = async (req, res) => {
       status: 'pending',
       resultsCount: 0
     });
-    
+
     res.status(201).json({ success: true, message: 'Search created successfully', data: search });
   } catch (error) {
     console.error('Error creating search:', error);
@@ -73,22 +92,22 @@ exports.updateSearchStatus = async (req, res) => {
   try {
     const userId = req.user._id;
     const { status, resultsCount } = req.body;
-    
+
     const updateData = { status, resultsCount };
-    
+
     // Set download expiry for completed searches (30 days)
     if (status === 'completed') {
       updateData.completedAt = new Date();
       updateData['downloadInfo.isDownloadable'] = true;
       updateData['downloadInfo.expiresAt'] = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     }
-    
+
     const search = await Search.findOneAndUpdate({ _id: req.params.id, userId }, updateData, { new: true });
-    
+
     if (!search) {
       return res.status(404).json({ success: false, message: 'Search not found' });
     }
-    
+
     res.json({ success: true, message: 'Search updated successfully', data: search });
   } catch (error) {
     console.error('Error updating search:', error);
@@ -101,11 +120,11 @@ exports.storeSearchResults = async (req, res) => {
   try {
     const userId = req.user._id;
     const { searchId, results } = req.body;
-    
+
     if (!results || !Array.isArray(results)) {
       return res.status(400).json({ success: false, message: 'Results array is required' });
     }
-    
+
     const searchResults = results.map(result => ({
       searchId,
       userId,
@@ -131,18 +150,18 @@ exports.storeSearchResults = async (req, res) => {
         verificationStatus: result.verificationStatus || 'unverified'
       }
     }));
-    
+
     await SearchResult.insertMany(searchResults);
-    
+
     // Update search with results count
-    await Search.findByIdAndUpdate(searchId, { 
+    await Search.findByIdAndUpdate(searchId, {
       resultsCount: results.length,
       status: 'completed',
       completedAt: new Date(),
       'downloadInfo.isDownloadable': true,
       'downloadInfo.expiresAt': new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     });
-    
+
     res.json({ success: true, message: 'Search results stored successfully', count: results.length });
   } catch (error) {
     console.error('Error storing search results:', error);
@@ -156,35 +175,35 @@ exports.getSearchResults = async (req, res) => {
     const userId = req.user._id;
     const { searchId } = req.params;
     const { format = 'json' } = req.query;
-    
+
     const search = await Search.findOne({ _id: searchId, userId });
     if (!search) {
       return res.status(404).json({ success: false, message: 'Search not found' });
     }
-    
+
     if (!search.downloadInfo.isDownloadable || (search.downloadInfo.expiresAt && search.downloadInfo.expiresAt < new Date())) {
       return res.status(403).json({ success: false, message: 'Search results are no longer available for download' });
     }
-    
-    const results = await SearchResult.find({ 
+
+    const results = await SearchResult.find({
       searchId,
       userId,
-      'downloadStatus.isIncludedInDownload': true 
+      'downloadStatus.isIncludedInDownload': true
     }).select('-_id -searchId -userId -downloadStatus -createdAt -updatedAt');
-    
+
     // Update download tracking
     await Search.findByIdAndUpdate(searchId, {
       $inc: { 'downloadInfo.downloadCount': 1 },
       'downloadInfo.lastDownloadedAt': new Date()
     });
-    
+
     await SearchResult.updateMany(
       { searchId },
       { $inc: { 'downloadStatus.downloadedCount': 1 } }
     );
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       data: {
         search: {
           id: search._id,
@@ -207,22 +226,22 @@ exports.cancelSearch = async (req, res) => {
   try {
     const userId = req.user._id;
     const search = await Search.findOne({ _id: req.params.id, userId });
-    
+
     if (!search) {
       return res.status(404).json({ success: false, message: 'Search not found' });
     }
-    
+
     if (search.status === 'completed' || search.status === 'failed') {
       return res.json({ success: false, message: 'Search already completed' });
     }
-    
+
     search.cancelRequested = true;
     if (search.status === 'pending') {
       search.status = 'cancelled';
       search.completedAt = new Date();
     }
     await search.save();
-    
+
     console.log(`🚫 Cancellation requested for search ${search._id}`);
     res.json({ success: true, message: 'Cancellation requested' });
   } catch (error) {
@@ -236,17 +255,17 @@ exports.deleteSearch = async (req, res) => {
   try {
     const userId = req.user._id;
     const search = await Search.findOneAndDelete({ _id: req.params.id, userId });
-    
+
     if (!search) {
       return res.status(404).json({ success: false, message: 'Search not found' });
     }
-    
+
     // Delete associated data
     await Promise.all([
       Lead.deleteMany({ searchId: req.params.id }),
       SearchResult.deleteMany({ searchId: req.params.id, userId })
     ]);
-    
+
     res.json({ success: true, message: 'Search deleted successfully' });
   } catch (error) {
     console.error('Error deleting search:', error);

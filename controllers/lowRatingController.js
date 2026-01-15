@@ -8,12 +8,12 @@ const logger = require('../src/utils/logger');
 exports.scanForLowRatingBusinesses = async (req, res) => {
   let search;
   try {
-    const { 
-      city, 
-      state, 
-      country, 
-      niche, 
-      maxRating, 
+    const {
+      city,
+      state,
+      country,
+      niche,
+      maxRating,
       lat,              // NEW: Optional coordinates from map
       lng,              // NEW: Optional coordinates from map
       useHunter = true  // NEW: Enable/disable Hunter.io (default true)
@@ -22,9 +22,9 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
 
     // Validate: Need either city/country (preferred) OR coordinates
     if (!city && !country && (!lat || !lng)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Location required: provide city/country or coordinates (lat/lng)' 
+      return res.status(400).json({
+        success: false,
+        message: 'Location required: provide city/country or coordinates (lat/lng)'
       });
     }
 
@@ -71,23 +71,23 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
         const settings = await Settings.findOne();
         let apiKey = settings?.apiKeys?.googlePlaces || process.env.GOOGLE_PLACES_API_KEY;
         if (apiKey) apiKey = apiKey.replace(/["']/g, '').trim();
-        
+
         const addressParts = [city, state, country].filter(Boolean);
         const address = addressParts.join(', ');
-        
+
         const geocodeResponse = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
           params: { address, key: apiKey }
         });
-        
+
         if (!geocodeResponse.data.results || geocodeResponse.data.results.length === 0) {
           throw new Error('Location not found');
         }
-        
+
         const location = geocodeResponse.data.results[0]?.geometry?.location;
         if (!location) {
           throw new Error('Invalid geocoding response');
         }
-        
+
         searchLocation = { lat: location.lat, lng: location.lng };
         console.log(`✅ Geocoded to: ${searchLocation.lat}, ${searchLocation.lng}`);
       } else if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
@@ -146,7 +146,7 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
     const allBusinesses = [...googleBusinesses, ...yelpBusinesses];
     const uniqueBusinesses = [];
     const seenBusinesses = new Set();
-    
+
     for (const business of allBusinesses) {
       const key = `${business.name.toLowerCase()}-${business.address.toLowerCase()}`;
       if (!seenBusinesses.has(key)) {
@@ -154,10 +154,10 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
         uniqueBusinesses.push(business);
       }
     }
-    
+
     // Return ALL results - no lead cap limit
     const businesses = uniqueBusinesses;
-    
+
     logger.success(`Combined results: ${businesses.length} unique businesses (Google: ${googleBusinesses.length}, Yelp: ${yelpBusinesses.length})`);
 
     // Enrich with Hunter.io emails (only if enabled)
@@ -197,7 +197,7 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
           return;
         }
       }
-      
+
       const business = enrichedBusinesses[i];
       try {
         const savedBusiness = await LowRatingBusiness.create({
@@ -246,14 +246,29 @@ exports.scanForLowRatingBusinesses = async (req, res) => {
 exports.getRecentSearches = async (req, res) => {
   try {
     const userId = req.user._id;
+    const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+
+    const total = await LowRatingSearch.countDocuments({ userId });
 
     const searches = await LowRatingSearch.find({ userId })
       .sort({ createdAt: -1 })
+      .skip(skip)
       .limit(limit)
       .lean();
 
-    res.json({ success: true, searches, data: searches });
+    res.json({
+      success: true,
+      searches,
+      data: searches,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -294,9 +309,9 @@ exports.getSearchResults = async (req, res) => {
       source: b.source
     }));
 
-    res.json({ 
-      success: true, 
-      data: { 
+    res.json({
+      success: true,
+      data: {
         search: {
           id: search._id,
           city: search.city,
@@ -305,9 +320,9 @@ exports.getSearchResults = async (req, res) => {
           executedAt: search.executedAt,
           resultsCount: search.resultsCount,
           status: search.status
-        }, 
-        results: formattedBusinesses 
-      } 
+        },
+        results: formattedBusinesses
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -320,26 +335,26 @@ exports.cancelSearch = async (req, res) => {
     const { searchId } = req.params;
     const userId = req.user._id;
     const search = await LowRatingSearch.findOne({ _id: searchId, userId });
-    
+
     if (!search) {
       console.log(`❌ Search not found: ${searchId}`);
       return res.status(404).json({ success: false, message: 'Search not found' });
     }
-    
+
     console.log(`📊 Current search status: ${search.status}`);
-    
+
     if (search.status === 'completed' || search.status === 'failed') {
       console.log(`⚠️ Search already ${search.status}`);
       return res.json({ success: false, message: 'Search already completed' });
     }
-    
+
     search.cancelRequested = true;
     if (search.status === 'pending') {
       search.status = 'cancelled';
       search.completedAt = new Date();
     }
     await search.save();
-    
+
     console.log(`✅ Cancellation flag set: cancelRequested=true, status=${search.status}`);
     res.json({ success: true, message: 'Cancellation requested' });
   } catch (error) {

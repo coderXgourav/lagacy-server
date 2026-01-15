@@ -7,11 +7,11 @@ const hunterService = require('../services/hunterService');
 exports.scanForBusinesses = async (req, res) => {
   let search;
   try {
-    const { 
-      city, 
-      state, 
-      country, 
-      niche, 
+    const {
+      city,
+      state,
+      country,
+      niche,
       lat,              // NEW: Optional coordinates from map
       lng,              // NEW: Optional coordinates from map
       useHunter = true  // NEW: Enable/disable Hunter.io (default true)
@@ -20,9 +20,9 @@ exports.scanForBusinesses = async (req, res) => {
 
     // Validate: Need either city/country (preferred) OR coordinates
     if (!city && !country && (!lat || !lng)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Location required: provide city/country or coordinates (lat/lng)' 
+      return res.status(400).json({
+        success: false,
+        message: 'Location required: provide city/country or coordinates (lat/lng)'
       });
     }
 
@@ -63,21 +63,21 @@ exports.scanForBusinesses = async (req, res) => {
         const settings = await Settings.findOne();
         let googleApiKey = settings?.apiKeys?.googlePlaces || process.env.GOOGLE_PLACES_API_KEY;
         if (googleApiKey) googleApiKey = googleApiKey.replace(/["']/g, '').trim();
-        
+
         const locationStr = [city, state, country].filter(Boolean).join(', ');
         const geocodeResponse = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
           params: { address: locationStr, key: googleApiKey }
         });
-        
+
         if (!geocodeResponse.data.results || geocodeResponse.data.results.length === 0) {
           throw new Error('Location not found');
         }
-        
+
         const location = geocodeResponse.data.results[0]?.geometry?.location;
         if (!location) {
           throw new Error('Invalid geocoding response');
         }
-        
+
         searchLocation = { lat: location.lat, lng: location.lng };
         console.log(`✅ Geocoded to: ${searchLocation.lat}, ${searchLocation.lng}`);
       } else if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
@@ -94,7 +94,7 @@ exports.scanForBusinesses = async (req, res) => {
       await search.save();
       return;
     }
-    
+
     // Check if cancelled
     let freshSearch = await NoWebsiteSearch.findById(search._id);
     if (freshSearch.cancelRequested) {
@@ -128,17 +128,17 @@ exports.scanForBusinesses = async (req, res) => {
       await search.save();
       return;
     }
-    
+
     // Combine and deduplicate by phone
     console.log(`\n🔀 Combining results from Google Places and Foursquare...`);
     const allBusinesses = [...googleBusinesses, ...foursquareBusinesses];
     const uniqueBusinesses = [];
     const seenPhones = new Set();
     let duplicatesRemoved = 0;
-    
+
     for (const business of allBusinesses) {
       // Return ALL results - no lead cap
-      
+
       const phoneKey = business.phone?.replace(/\D/g, '') || business.name;
       if (!seenPhones.has(phoneKey)) {
         seenPhones.add(phoneKey);
@@ -147,11 +147,11 @@ exports.scanForBusinesses = async (req, res) => {
         duplicatesRemoved++;
       }
     }
-    
+
     console.log(`   ✓ Combined: ${allBusinesses.length} total (Google: ${googleBusinesses.length}, Foursquare: ${foursquareBusinesses.length})`);
     console.log(`   ✓ Removed ${duplicatesRemoved} duplicates`);
     console.log(`   ✓ Final unique: ${uniqueBusinesses.length}\n`);
-    
+
     const businesses = uniqueBusinesses;
 
     if (businesses.length === 0) {
@@ -180,7 +180,7 @@ exports.scanForBusinesses = async (req, res) => {
           return;
         }
       }
-      
+
       const business = businesses[i];
       try {
         // Try Facebook API enrichment
@@ -191,8 +191,8 @@ exports.scanForBusinesses = async (req, res) => {
         });
 
         // Use social page from Google Places if available, otherwise use Facebook API result
-        const finalFacebookPage = business.socialPage?.toLowerCase().includes('facebook') 
-          ? business.socialPage 
+        const finalFacebookPage = business.socialPage?.toLowerCase().includes('facebook')
+          ? business.socialPage
           : (facebookData?.pageUrl || business.socialPage || null);
 
         // Try to get email from Hunter if Facebook page exists (only if useHunter is enabled)
@@ -229,12 +229,12 @@ exports.scanForBusinesses = async (req, res) => {
 
         enrichedBusinesses.push(savedBusiness);
         if (facebookData) facebookSuccess++;
-        
+
         console.log(`   [${i + 1}/${businesses.length}] ✓ ${business.name} ${facebookData ? '(Facebook data found)' : ''} ${email ? '(Email found)' : ''}`);
       } catch (error) {
         facebookFailed++;
         console.log(`   [${i + 1}/${businesses.length}] ⚠️  ${business.name} (Enrichment failed)`);
-        
+
         const savedBusiness = await NoWebsiteBusiness.create({
           searchId: search._id,
           userId,
@@ -252,7 +252,7 @@ exports.scanForBusinesses = async (req, res) => {
         enrichedBusinesses.push(savedBusiness);
       }
     }
-    
+
     console.log(`\n   ✓ Enrichment complete: ${facebookSuccess} with Facebook data, ${facebookFailed} without, ${hunterSuccess} with Hunter emails\n`);
 
     search.resultsCount = enrichedBusinesses.length;
@@ -288,16 +288,27 @@ exports.scanForBusinesses = async (req, res) => {
 exports.getRecentSearches = async (req, res) => {
   try {
     const userId = req.user._id;
+    const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+
+    const total = await NoWebsiteSearch.countDocuments({ userId });
 
     const searches = await NoWebsiteSearch.find({ userId })
       .sort({ createdAt: -1 })
+      .skip(skip)
       .limit(limit)
       .lean();
 
     res.json({
       success: true,
-      data: searches
+      data: searches,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
     });
   } catch (error) {
     res.status(500).json({
@@ -321,13 +332,13 @@ exports.getSearchResults = async (req, res) => {
       });
     }
 
-    const businesses = await NoWebsiteBusiness.find({ 
-      searchId, 
-      userId 
+    const businesses = await NoWebsiteBusiness.find({
+      searchId,
+      userId
     })
-    .limit(limit * 1)
-    .skip((page - 1) * limit)
-    .lean();
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .lean();
 
     res.json({
       success: true,
@@ -357,19 +368,19 @@ exports.cancelSearch = async (req, res) => {
     const { searchId } = req.params;
     const userId = req.user._id;
     const search = await NoWebsiteSearch.findOne({ _id: searchId, userId });
-    
+
     if (!search) return res.status(404).json({ success: false, message: 'Search not found' });
     if (search.status === 'completed' || search.status === 'failed') {
       return res.json({ success: false, message: 'Search already completed' });
     }
-    
+
     search.cancelRequested = true;
     if (search.status === 'pending') {
       search.status = 'cancelled';
       search.completedAt = new Date();
     }
     await search.save();
-    
+
     console.log(`🚫 Cancellation requested for search ${search._id}`);
     res.json({ success: true, message: 'Cancellation requested' });
   } catch (error) {
@@ -382,9 +393,9 @@ exports.deleteSearch = async (req, res) => {
     const { searchId } = req.params;
     const userId = req.user._id;
 
-    const search = await NoWebsiteSearch.findOneAndDelete({ 
-      _id: searchId, 
-      userId 
+    const search = await NoWebsiteSearch.findOneAndDelete({
+      _id: searchId,
+      userId
     });
 
     if (!search) {
