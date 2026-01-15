@@ -13,7 +13,7 @@ domainScraperScheduler.start();
 
 // Middleware
 app.use(cors({
-  origin: ["https://lagacy-client.vercel.app", "http://localhost:8080", "http://localhost:5173"],
+  origin: ["https://lagacy-client.vercel.app", "http://localhost:8080", "http://localhost:5173", "https://aitool.kyptronix.us", "https://www.aitool.kyptronix.us"],
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   credentials: true,
 }));
