@@ -1,0 +1,174 @@
+const axios = require('axios');
+const logger = require('../utils/logger');
+const Settings = require('../../models/Settings');
+
+function extractDomain(url) {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname.replace('www.', '');
+  } catch {
+    return null;
+  }
+}
+
+async function checkWhoisXML(domain, apiKey) {
+  const response = await axios.get('https://www.whoisxmlapi.com/whoisserver/WhoisService', {
+    params: { apiKey, domainName: domain, outputFormat: 'JSON' }
+  });
+  const whoisRecord = response.data?.WhoisRecord;
+  return {
+    creationDate: whoisRecord?.createdDate || null,
+    ownerName: whoisRecord?.registrant?.name || whoisRecord?.registrant?.organization || whoisRecord?.administrativeContact?.name || null
+  };
+}
+
+async function checkWhoAPI(domain) {
+  const response = await axios.get(`https://www.whoisxmlapi.com/whoisserver/DNSService`, {
+    params: { apiKey: process.env.WHOIS_API_KEY, domainName: domain, type: '_all', outputFormat: 'JSON' }
+  });
+  const data = response.data?.DNSData;
+  return {
+    creationDate: data?.audit?.createdDate || null,
+    ownerName: null
+  };
+}
+
+async function checkRDAPAPI(domain) {
+  const response = await axios.get(`https://rdap.org/domain/${domain}`);
+  const events = response.data?.events || [];
+  const registration = events.find(e => e.eventAction === 'registration');
+  
+  let ownerName = null;
+  const vcardData = response.data?.entities?.[0]?.vcardArray?.[1];
+  if (vcardData) {
+    const fnField = vcardData.find(field => field[0] === 'fn');
+    if (fnField && fnField[3]) {
+      ownerName = Array.isArray(fnField[3]) ? fnField[3].filter(v => v).join(' ') : String(fnField[3]);
+    }
+  }
+  
+  return {
+    creationDate: registration?.eventDate || null,
+    ownerName: ownerName || null
+  };
+}
+
+async function checkWhoisFreaks(domain, apiKey) {
+  const response = await axios.get(`https://api.whoisfreaks.com/v1.0/whois`, {
+    params: { whois: 'live', domainName: domain, apiKey }
+  });
+  return {
+    creationDate: response.data?.create_date || null,
+    ownerName: response.data?.registrant_name || response.data?.registrant_organization || null
+  };
+}
+
+async function checkDomainAge(domain, retries = 2) {
+  try {
+    const settings = await Settings.findOne();
+    
+    // Try RDAP first (100% free, no API key)
+    try {
+      const result = await checkRDAPAPI(domain);
+      if (result.creationDate) {
+        console.log(`✓ RDAP: ${domain} created: ${result.creationDate}`);
+        return result;
+      }
+    } catch (error) {
+      console.log(`✗ RDAP failed for ${domain}`);
+    }
+    
+    // Try WhoisFreaks if RDAP fails
+    const whoisFreaksKey = settings?.apiKeys?.whoisfreaks;
+    if (whoisFreaksKey) {
+      try {
+        const result = await checkWhoisFreaks(domain, whoisFreaksKey);
+        if (result.creationDate) {
+          console.log(`✓ WhoisFreaks: ${domain} created: ${result.creationDate}`);
+          return result;
+        }
+      } catch (error) {
+        console.log(`✗ WhoisFreaks failed for ${domain}`);
+      }
+    }
+    
+    // Try WhoisXML if both RDAP and WhoisFreaks fail
+    const whoisXmlKey = settings?.apiKeys?.whoisxml;
+    if (whoisXmlKey) {
+      try {
+        const result = await checkWhoisXML(domain, whoisXmlKey);
+        if (result.creationDate) {
+          console.log(`✓ WhoisXML: ${domain} created: ${result.creationDate}`);
+          return result;
+        }
+      } catch (error) {
+        console.log(`✗ WhoisXML failed for ${domain}`);
+      }
+    }
+    
+    console.log(`✗ All methods failed for ${domain}`);
+    return null;
+  } catch (error) {
+    if (retries > 0) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return checkDomainAge(domain, retries - 1);
+    }
+    return null;
+  }
+}
+
+async function enrichWithDomainAge(businesses, search = null) {
+  logger.info(`Checking domain age for ${businesses.length} businesses`);
+  
+  const BATCH_SIZE = 3;
+  const enriched = [];
+  
+  for (let i = 0; i < businesses.length; i += BATCH_SIZE) {
+    // Check if search was cancelled
+    if (search) {
+      const freshSearch = await search.constructor.findById(search._id);
+      if (freshSearch?.cancelRequested) {
+        console.log('⚠️ Search cancelled, stopping domain age check');
+        break;
+      }
+    }
+    
+    const batch = businesses.slice(i, i + BATCH_SIZE);
+    console.log(`\n⚡ Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(businesses.length / BATCH_SIZE)} (${batch.length} domains)...`);
+    
+    const batchPromises = batch.map(async (business) => {
+      const domain = extractDomain(business.website);
+      if (!domain) {
+        console.log(`⚠ Skipped ${business.website} - Invalid domain`);
+        return null;
+      }
+
+      const domainInfo = await checkDomainAge(domain);
+      
+      if (!domainInfo?.creationDate) {
+        console.log(`✗ ${domain} - No creation date, skipping`);
+        return null;
+      }
+      
+      console.log(`✓ ${domain} - Created: ${domainInfo.creationDate}`);
+      return {
+        ...business,
+        domain,
+        creationDate: domainInfo.creationDate,
+        ownerName: domainInfo.ownerName
+      };
+    });
+    
+    const batchResults = await Promise.all(batchPromises);
+    enriched.push(...batchResults.filter(r => r !== null));
+    
+    if (i + BATCH_SIZE < businesses.length) {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+  }
+
+  logger.success(`Enriched ${enriched.length} businesses with domain age`);
+  return enriched;
+}
+
+module.exports = { enrichWithDomainAge, checkDomainAge };
